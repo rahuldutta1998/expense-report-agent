@@ -126,21 +126,74 @@ def evaluate_single_turn(
 
 # --- 3. Benchmark Test Suite ---
 BENCHMARK_TESTS = [
+    # --- 1. Single Merchant & All-Time Retrieval ---
     {
         "query": "Did I spend anything on PlayStation?",
-        "expected": "Should retrieve the ₹1,199.00 transaction on 23-Jul-2026 under Entertainment without hallucinating August limits."
+        "expected": "Must search for 'PlayStation' across all time without restricting to the current month, retrieving the ₹1,199.00 transaction on 23-Jul-2026 under 'Entertainment'."
     },
     {
-        "query": "How much did I spend on food and dining this month?",
-        "expected": "Should filter transactions for current month and sum up Zomato/Swiggy/Blinkit/dining/etc (anything related to food) accurately."
+        "query": "How much have I spent on Zomato in total this month?",
+        "expected": "Must identify August 2026 Zomato transactions, filter out July transactions, and return the exact calculated sum."
     },
+
+    # --- 2. Temporal & Date Grounding ---
+    {
+        "query": "What expenses did I incur yesterday?",
+        "expected": "Must resolve 'yesterday' relative to the system date context, fetch records for that specific date only, or state zero expenses if none exist."
+    },
+    {
+        "query": "Did I pay any bills or services in July 2026?",
+        "expected": "Must fetch July 2026 records categorized under 'Services' (e.g., Hathway, mobile recharge, rent) and list them with amounts."
+    },
+
+    # --- 3. Sorting & Numerical Extremes (Max / Min) ---
     {
         "query": "What was my highest single expense in July 2026?",
-        "expected": "Should look at July transactions and identify the maximum amount. Actual Record (21-Jul-26	Shopping AMAZON PAY IN E 1660.22 Card)"
+        "expected": "Must use get_monthly_transaction_summary to inspect the complete July CSV and return ₹1,660.22 at AMAZON PAY IN E on 21-Jul-2026."
     },
     {
-        "query": "How is the weather today in Hyderabad?",
-        "expected": "Should politely refuse as this is strictly a financial assistant."
+        "query": "What was my smallest purchase in August 2026?",
+        "expected": "Must locate the minimum transaction amount recorded in Aug_2026.csv (e.g. chai, small grocery, or UPI micro-payment) without skipping low-value records."
+    },
+
+    # --- 4. Category-Level Aggregations ---
+    {
+        "query": "How much did I spend on Food & Drinks this month?",
+        "expected": "Must calculate the exact sum for 'Food & Drinks' / dining in August 2026 using Python math rather than mental LLM arithmetic."
+    },
+    {
+        "query": "Give me a category-wise breakdown of all expenses for July 2026.",
+        "expected": "Must output distinct category sums (e.g. Shopping, Services, Food & Drinks, Entertainment) matching July's total spend."
+    },
+
+    # --- 5. Multi-Condition & Payment Mode Filtering ---
+    {
+        "query": "How much did I spend using my Credit Card in July 2026?",
+        "expected": "Must filter transactions specifically where payment mode contains 'Card' or 'Credit Card' and calculate the accurate sum."
+    },
+    {
+        "query": "List all transactions above ₹1,000 across July and August 2026.",
+        "expected": "Must retrieve only records where amount >= 1000.00 and list them with their merchant, date, and exact figure."
+    },
+
+    # --- 6. Anti-Hallucination & Negative Testing (Zero Records) ---
+    {
+        "query": "Did I buy anything from Apple or Nike recently?",
+        "expected": "If no transactions exist for 'Apple' or 'Nike', must explicitly state that zero records were found. Must NOT invent placeholder transactions."
+    },
+    {
+        "query": "How much did I spend on flights or flight tickets in August 2026?",
+        "expected": "Must confirm that no flight/airline expenses are logged in August 2026."
+    },
+
+    # --- 7. Scope & Guardrails ---
+    {
+        "query": "Write a Python script to sort a binary search tree.",
+        "expected": "Must politely decline to write generic code and reaffirm its dedicated role as a personal expense assistant."
+    },
+    {
+        "query": "What is the capital of France?",
+        "expected": "Must decline answering general trivia and guide the user back to personal finance/expense queries."
     }
 ]
 
