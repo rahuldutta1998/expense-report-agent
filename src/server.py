@@ -3,6 +3,7 @@ import json
 import os
 import asyncio
 import secrets
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -16,12 +17,14 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 import uvicorn
 
-from chat_expenses import query_agent_with_token_limit
-from ingest_transactions import (
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from src.agents.chat_expenses import query_agent_with_token_limit
+from src.util.ingest_transactions import (
     BASE_ICLOUD_DIR,
     sync_csv_to_vector_db, restore_vector_db, get_records_by_id, delete_transaction_ids,
 )
-from delete_transaction_data import delete_transactions_from_csv
+from src.util.delete_transaction_data import delete_transactions_from_csv
 
 load_dotenv()
 

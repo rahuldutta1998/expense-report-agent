@@ -1,11 +1,11 @@
-from typing import List, Optional
+from typing import Optional
 from datetime import datetime
 from dotenv import load_dotenv
 from langchain.agents import create_agent
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 
-from chat_expenses import search_transactions, get_monthly_transaction_summary, get_system_prompt, checkpointer
+from src.agents.chat_expenses import search_transactions, get_monthly_transaction_summary, get_system_prompt, checkpointer
 
 # Import your actual agent tools and query runner
 

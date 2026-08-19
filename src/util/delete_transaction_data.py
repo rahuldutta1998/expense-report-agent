@@ -11,7 +11,7 @@ BASE_ICLOUD_DIR = os.path.expanduser(
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_DIR = os.path.join(BASE_DIR, "finance_memory_db")
+DB_DIR = os.path.join(BASE_DIR, "../../finance_memory_db")
 os.makedirs(DB_DIR, exist_ok=True)
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")

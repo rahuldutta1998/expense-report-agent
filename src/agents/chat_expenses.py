@@ -3,7 +3,7 @@ import glob
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
 from langchain.agents import create_agent
@@ -16,12 +16,12 @@ from langgraph.checkpoint.memory import MemorySaver
 from pydantic import Field
 from pydantic.v1 import BaseModel
 
-from ingest_transactions import sync_csv_to_vector_db
+from src.util.ingest_transactions import sync_csv_to_vector_db
 
 load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_DIR = os.path.join(BASE_DIR, "finance_memory_db")
+DB_DIR = os.path.join(BASE_DIR, "../../finance_memory_db")
 os.makedirs(DB_DIR, exist_ok=True)
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")

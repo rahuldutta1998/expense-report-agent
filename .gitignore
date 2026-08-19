@@ -12,5 +12,9 @@ venv/
 .DS_Store
 finance_memory_db/
 
-server.log
-server.err
+logs/server.log
+logs/server.err
+logs/backup.err
+logs/backup.log
+logs/budget.log
+logs/budget.err
