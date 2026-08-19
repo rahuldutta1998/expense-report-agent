@@ -13,6 +13,8 @@ from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
+from pydantic import Field
+from pydantic.v1 import BaseModel
 
 from ingest_transactions import sync_csv_to_vector_db
 
@@ -31,9 +33,16 @@ vector_db = Chroma(
 )
 
 BASE_ICLOUD_DIR = os.path.expanduser(
-    "~/Library/Mobile Documents/com~apple~CloudDocs/Transaction_Record"
+    os.getenv("BASE_ICLOUD_DIR", "")
 )
 
+class TransactionRecord(BaseModel):
+    date: str = Field(..., description="YYYY-MM-DD or DD-Mon-YYYY", json_schema_extra={"example": "12-Aug-2026"})
+    merchant: str = Field(..., json_schema_extra={"example": "Starbucks"})
+    amount: float = Field(..., json_schema_extra={"example": 5.50})
+    category: str = Field(default="Uncategorized", json_schema_extra={"example": "Food & Dining"})
+    payment: str = Field(default="UPI", json_schema_extra={"example": "UPI"})
+    source_file: str = Field(default=None, json_schema_extra={"example": "Aug_2026.csv"})
 
 @tool
 def get_monthly_transaction_summary(
@@ -201,6 +210,36 @@ def search_transactions(query: str) -> str:
     records = [f"- {doc.page_content}" for doc in results]
     return "Retrieved Records:\n" + "\n".join(records)
 
+def parse_transaction(metadata):
+    if not metadata:
+        return None
+    return {
+        "date": metadata['date'],
+        "merchant": metadata['merchant'],
+        "amount": metadata['amount'],
+        "category": metadata['category'],
+        "payment": metadata['payment'],
+        "source_file": metadata['source_file'],
+    }
+
+@tool
+def search_transactions_to_delete(query: str) -> list[dict] | None:
+    """Search vector DB for past transactions. Use all the filters possible to find the exact match"""
+    if not query or query.strip() in ["*", "all", "everything"]:
+        query = "transaction expense spend"
+    results = vector_db.similarity_search(query, k=5)
+
+    if not results:
+        return None
+
+    structured = []
+    for doc in results:
+        data = parse_transaction(doc.metadata)
+        if data:
+            record = TransactionRecord(**data)
+            structured.append({"id": doc.id, "data": record})
+    return structured
+
 
 checkpointer = MemorySaver()
 model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -243,6 +282,18 @@ CRITICAL SEARCH RULES:
 3. TRUTHFULNESS & ACCURACY:
    - If transactions are found for the requested merchant in the retrieved text, report the exact date, amount, and category.
    - When calculating monthly totals or category totals, rely STRICTLY on the EXACT CALCULATED TOTAL provided by `get_monthly_transaction_summary`. DO NOT attempt manual arithmetic addition.
+
+4. DELETE CASE:
+   - User can ask you to delete a transaction. In that case, you must call `search_transactions_to_delete` with the user's query to find the exact transaction(s) to delete.
+   - Extract all the possible filters from the user's query (date, merchant, amount, category, payment mode) and pass them to `search_transactions_to_delete`.
+   - The search_transactions_to_delete tool will return top 5 response in this format {{"id": "unique_vector_db_id", "data": TransactionRecord(...)}}, where TransactionRecord contains the exact transaction details.
+   - Filter out all the relevant transactions as per user's query.
+   - When returning candidate transactions for deletion, respond ONLY with a valid JSON array in this format, in case if no transactions are found, return a message stating "No matching transactions found for deletion." Otherwise, return:
+    [
+      {{"id": "unique_vector_db_id", "data": {{"date": "...", "merchant": "...", "amount": ..., "category": "...", "payment": "...", "source_file": "..."}}}},
+      ...
+    ]
+   - Do not include any extra text, explanation, or formatting.
 """
 
 
@@ -291,7 +342,7 @@ def query_agent_with_token_limit(user_query: str, thread_id: str = "iphone_chat_
     effective_thread_id = get_effective_thread_id(thread_id)
     config: RunnableConfig = {"configurable": {"thread_id": effective_thread_id}}
 
-    tools = [search_transactions, get_monthly_transaction_summary]
+    tools = [search_transactions, search_transactions_to_delete, get_monthly_transaction_summary]
 
     dynamic_agent = create_agent(
         model=model,

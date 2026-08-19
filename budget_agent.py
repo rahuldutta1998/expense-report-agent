@@ -31,10 +31,10 @@ rules_vector_db = Chroma(
 
 # Temporary offline buffer file from Shortcuts
 SHORTCUTS_APP_CONTAINER = os.path.expanduser(
-    "~/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/temp_transaction_data.csv"
+    os.getenv("SHORTCUTS_APP_CONTAINER_PATH", "")
 )
 GENERIC_ICLOUD_CONTAINER = os.path.expanduser(
-    "~/Library/Mobile Documents/com~apple~CloudDocs/Shortcuts/temp_transaction_data.csv"
+    os.getenv("GENERIC_ICLOUD_CONTAINER_PATH", "")
 )
 
 # --- Default Fallback Limits ---
