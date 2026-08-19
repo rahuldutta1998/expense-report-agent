@@ -5,6 +5,7 @@ import os
 import subprocess
 import time
 from datetime import datetime
+from typing import Any
 
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
@@ -14,7 +15,7 @@ load_dotenv()
 
 # Unified storage directory in iCloud
 BASE_ICLOUD_DIR = os.path.expanduser(
-    "~/Library/Mobile Documents/com~apple~CloudDocs/Transaction_Record"
+    os.getenv("BASE_ICLOUD_DIR", "")
 )
 os.makedirs(BASE_ICLOUD_DIR, exist_ok=True)
 
@@ -148,6 +149,27 @@ def reset_vector_db():
     vector_db.reset_collection()
     sync_csv_to_vector_db()
 
+def delete_transaction_ids(ids : list[str]) -> str :
+    """Utility function to delete a transaction."""
+    try:
+        vector_db.delete(ids)
+    except Exception as e:
+        print(e, flush=True)
+        raise e
+    return "Successfully deleted transaction."
+
+def get_records_by_id(ids : list[str]) -> dict[str, Any]:
+    if not ids:
+        return {}
+    return vector_db.get(ids)
+
+def restore_vector_db(deleted_backup : dict) -> None:
+    if deleted_backup:
+        vector_db.add_texts(
+            texts=[doc for doc in deleted_backup["documents"]],
+            metadatas=[doc for doc in deleted_backup["metadatas"]],
+            ids=[doc for doc in deleted_backup["ids"]]
+        )
 
 if __name__ == "__main__":
     sync_csv_to_vector_db()

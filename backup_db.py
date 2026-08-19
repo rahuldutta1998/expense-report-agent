@@ -10,7 +10,7 @@ DB_SOURCE_DIR = os.path.join(BASE_DIR, "finance_memory_db")
 
 # Destination directory in iCloud Drive
 ICLOUD_BACKUP_DIR = os.path.expanduser(
-    "~/Library/Mobile Documents/com~apple~CloudDocs/Expense_DB_Backups"
+    os.getenv("ICLOUD_BACKUP_DIR", "")
 )
 os.makedirs(ICLOUD_BACKUP_DIR, exist_ok=True)
 

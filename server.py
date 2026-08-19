@@ -2,8 +2,10 @@ import csv
 import json
 import os
 import asyncio
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request, Security
@@ -17,8 +19,9 @@ import uvicorn
 from chat_expenses import query_agent_with_token_limit
 from ingest_transactions import (
     BASE_ICLOUD_DIR,
-    sync_csv_to_vector_db,
+    sync_csv_to_vector_db, restore_vector_db, get_records_by_id, delete_transaction_ids,
 )
+from delete_transaction_data import delete_transactions_from_csv
 
 load_dotenv()
 
@@ -28,10 +31,10 @@ limiter = Limiter(key_func=get_remote_address)
 
 # Temporary offline buffer file created by Shortcuts
 SHORTCUTS_APP_CONTAINER = os.path.expanduser(
-    "~/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/temp_transaction_data.csv"
+    os.getenv("SHORTCUTS_APP_CONTAINER_PATH", "")
 )
 GENERIC_ICLOUD_CONTAINER = os.path.expanduser(
-    "~/Library/Mobile Documents/com~apple~CloudDocs/Shortcuts/temp_transaction_data.csv"
+    os.getenv("GENERIC_ICLOUD_CONTAINER_PATH", "")
 )
 
 
@@ -158,7 +161,7 @@ app.add_middleware(
 
 
 async def verify_api_key(x_api_key: str = Header(...)):
-    if not SECRET_API_KEY or x_api_key != SECRET_API_KEY:
+    if not SECRET_API_KEY or not secrets.compare_digest(x_api_key, SECRET_API_KEY):
         raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
     return x_api_key
 
@@ -169,7 +172,8 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    reply: str
+    reply_type: str = Field(default="text", description="Type of reply, e.g., 'text', 'transaction'")
+    reply: str | list[dict]
     status: str = "success"
 
 
@@ -177,6 +181,8 @@ class SyncResponse(BaseModel):
     message: str
     status: str = "success"
 
+class DeleteResponse(BaseModel):
+    message: str
 
 class TransactionIngestRequest(BaseModel):
     date: str = Field(..., description="YYYY-MM-DD or DD-Mon-YYYY", json_schema_extra={"example": "12-Aug-2026"})
@@ -184,7 +190,14 @@ class TransactionIngestRequest(BaseModel):
     amount: float = Field(..., json_schema_extra={"example": 5.50})
     category: str = Field(default="Uncategorized", json_schema_extra={"example": "Food & Dining"})
     payment: str = Field(default="UPI", json_schema_extra={"example": "UPI"})
+    source_file: str = Field(default="", description="Optional source file name for reference", json_schema_extra={"example": "Aug_2026.csv"})
 
+class TransactionRecords(BaseModel):
+    id: str = Field(..., description="Deterministic transaction ID")
+    data: TransactionIngestRequest = Field(..., description="Transaction data with keys: date, category, merchant, amount, payment")
+
+class DeleteRequestBody(BaseModel):
+    transaction_records: list[TransactionRecords] = Field(..., description="List of transactions to delete")
 
 @app.get("/")
 def health_check():
@@ -230,7 +243,11 @@ async def chat_endpoint(
         reply_content = query_agent_with_token_limit(
             user_query=body.query, thread_id=body.thread_id
         )
-        return ChatResponse(reply=reply_content)
+        is_valid_json, response = is_json(reply_content)
+        if is_valid_json:
+            return ChatResponse(reply_type="transaction", reply=response)
+        else:
+            return ChatResponse(reply_type="text", reply=reply_content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
 
@@ -244,6 +261,53 @@ async def trigger_sync(api_key: str = Security(verify_api_key)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Sync error: {str(e)}")
 
+@app.post("/delete", response_model=DeleteResponse)
+async def delete_transactions(transaction_records : DeleteRequestBody) -> DeleteResponse:
+    """
+    Delete transactions from vector database and CSV
+    :param transaction_records:
+    :return DeleteResponse:
+    """
+    if not transaction_records:
+        return DeleteResponse(message="No transactions provided for deletion.")
+
+    records = transaction_records.transaction_records
+    if not records:
+        return DeleteResponse(message="No transactions provided for deletion.")
+
+    deleted_ids = []
+    data = []
+    for record in records:
+        if record and record.id and record.data:
+            deleted_ids.append(record.id)
+            if hasattr(record.data, "model_dump"):
+                data.append(record.data.model_dump())
+            else:
+                data.append(record.data)
+
+    if not deleted_ids:
+        return DeleteResponse(message="No valid transaction IDs found for deletion.")
+
+    deleted_backup = get_records_by_id(deleted_ids)
+    if not deleted_backup:
+        return DeleteResponse(message="No matching transactions found in vector database for the provided IDs.")
+
+    try:
+        delete_transaction_ids(deleted_ids)
+        if not delete_transactions_from_csv(data):
+            raise Exception
+    except Exception as e:
+        print(f"Error deleting transactions: {e}", flush=True)
+        restore_vector_db(deleted_backup)
+        return DeleteResponse(message="Unable to delete transactions from vector database.")
+
+    return DeleteResponse(message=f"Successfully deleted {len(deleted_ids)} transaction(s) from the vector database.")
+
+def is_json(text: str) -> tuple[bool, Any] | bool:
+    try:
+        return True, json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return False, text
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080, reload=False)
