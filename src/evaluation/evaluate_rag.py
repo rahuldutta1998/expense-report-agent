@@ -5,7 +5,8 @@ from langchain.agents import create_agent
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 
-from src.agents.chat_expenses import search_transactions, get_monthly_transaction_summary, get_system_prompt, checkpointer
+from src.agents.chat_expenses import search_transactions, get_monthly_transaction_summary, get_system_prompt, \
+    checkpointer, search_transactions_to_delete
 
 # Import your actual agent tools and query runner
 
@@ -84,7 +85,7 @@ def evaluate_single_turn(
     # Invoke agent
     dynamic_agent = create_agent(
         model=agent_llm,
-        tools=[search_transactions, get_monthly_transaction_summary],
+        tools=[search_transactions, get_monthly_transaction_summary, search_transactions_to_delete],
         system_prompt=get_system_prompt(),
         checkpointer=checkpointer,
     )
@@ -144,6 +145,10 @@ BENCHMARK_TESTS = [
     {
         "query": "Did I pay any bills or services in July 2026?",
         "expected": "Must fetch July 2026 records categorized under 'Services' (e.g., Hathway, mobile recharge, rent) and list them with amounts."
+    },
+    {
+        "query": "What are the expenses I did today?",
+        "expected": f"Must resolve 'today' {datetime.now()} relative to the system date context, fetch records for that specific date only, or state zero expenses if none exist."
     },
 
     # --- 3. Sorting & Numerical Extremes (Max / Min) ---

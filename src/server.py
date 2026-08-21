@@ -210,7 +210,7 @@ def health_check():
 @app.post("/ingest")
 async def ingest_single_transaction(
     payload: TransactionIngestRequest,
-    api_key: str = Security(verify_api_key)
+    _api_key: str = Security(verify_api_key)
 ):
     try:
         # 1. Append to master monthly CSV
@@ -237,7 +237,7 @@ async def ingest_single_transaction(
 async def chat_endpoint(
     request: Request,
     body: ChatRequest,
-    api_key: str = Security(verify_api_key),
+    _api_key: str = Security(verify_api_key),
 ):
     if not body.query.strip():
         raise HTTPException(status_code=400, detail="Query string cannot be empty.")
@@ -252,11 +252,12 @@ async def chat_endpoint(
         else:
             return ChatResponse(reply_type="text", reply=reply_content)
     except Exception as e:
+        print(str(e))
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
 
 
 @app.post("/sync", response_model=SyncResponse)
-async def trigger_sync(api_key: str = Security(verify_api_key)):
+async def trigger_sync(_api_key: str = Security(verify_api_key)):
     try:
         await asyncio.to_thread(process_offline_buffer)
         await asyncio.to_thread(sync_csv_to_vector_db)
@@ -265,12 +266,10 @@ async def trigger_sync(api_key: str = Security(verify_api_key)):
         raise HTTPException(status_code=500, detail=f"Sync error: {str(e)}")
 
 @app.post("/delete", response_model=DeleteResponse)
-async def delete_transactions(transaction_records : DeleteRequestBody) -> DeleteResponse:
-    """
-    Delete transactions from vector database and CSV
-    :param transaction_records:
-    :return DeleteResponse:
-    """
+async def delete_transactions(
+        transaction_records : DeleteRequestBody,
+        _api_key: str = Security(verify_api_key)) -> DeleteResponse:
+
     if not transaction_records:
         return DeleteResponse(message="No transactions provided for deletion.")
 
