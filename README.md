@@ -1,25 +1,22 @@
 # Expense Agent: Autonomous AI-Powered Personal Finance & RAG Assistant
 
-A local-first, privacy-focused personal finance agent built with **FastAPI**, **LangChain/LangGraph**, **ChromaDB**, and **OpenAI**. 
-
-This system integrates directly with **iOS Shortcuts** for real-time transaction logging from SMS alerts, provides conversational expense insights via an agentic RAG pipeline, audits monthly budgets with push notifications, and handles offline logging with an automatic iCloud Drive sync buffer.
+A privacy-focused, local-first personal finance agent built with **FastAPI**, **LangChain/LangGraph**, **ChromaDB**, and **OpenAI**. It enables real-time and offline expense logging, conversational insights, monthly audits, and robust evaluation—all running on your own device.
 
 ---
 
-## 📑 Table of Contents
+## Table of Contents
 
-- [Architecture Overview](#-architecture-overview)
-- [Key Features](#-key-features)
-- [Repository Structure](#-repository-structure)
-- [Tech Stack](#-tech-stack)
-- [Setup & Installation](#-setup--installation)
-- [Environment Configuration](#-environment-configuration)
-- [API Endpoints](#-api-endpoints)
-- [iOS Shortcuts & Offline Sync Pipeline](#-ios-shortcuts--offline-sync-pipeline)
-- [Monthly Budget Agent](#-monthly-budget-agent)
-- [RAG Evaluation Framework](#-rag-evaluation-framework)
-- [Running as a Background Daemon (macOS)](#-running-as-a-background-daemon-macos)
-- [Security & Network Isolation](#-security--network-isolation)
+- Architecture Overview
+- Key Features
+- Repository Structure
+- Tech Stack
+- Setup & Installation
+- Environment Configuration
+- API Endpoints
+- iOS Shortcuts & Offline Sync
+- Monthly Budget Agent
+- RAG Evaluation Framework
+- Security & Network Isolation
 
 ---
 
@@ -29,46 +26,50 @@ This system integrates directly with **iOS Shortcuts** for real-time transaction
 flowchart TD
     A[iPhone SMS / Shortcut] -->|Online| B(POST /ingest)
     A -->|Offline / Fallback| C[iCloud: temp_transaction_data.csv]
-
     B --> D[FastAPI Server :8080]
     C -->|Sync every 30m / wake| E[process_offline_buffer]
     E --> D
-
     D -->|Append Row| F[(Monthly CSV: Mon_YYYY.csv)]
     D -->|Generate Embeddings| G[(ChromaDB: finance_memory_db)]
-
     G --> H[Conversational RAG Agent<br/>chat_expenses.py]
     G --> I[Monthly Budget Auditor<br/>budget_agent.py]
-
     H --> J[LangGraph Memory & Exact Math]
     I --> K[Native macOS Notification]
 ```
+
 ---
 
 ## 🌟 Key Features
 
-1. **Sub-Second Real-Time Ingestion (`/ingest`):** Parse bank and credit card SMS notifications directly on iOS and log them to master monthly CSVs in iCloud Drive with real-time vector embeddings.
-2. **Resilient Offline Sync:** If the server is unreachable (e.g., MacBook lid closed or away from home), iOS Shortcuts appends transactions to a local `temp_transaction_data.csv` in iCloud. A background loop automatically drains and merges the buffer once reconnected.
-3. **Hybrid RAG & Deterministic Math Engine:** Avoids LLM arithmetic errors by combining semantic vector search (ChromaDB) for merchant queries with deterministic Python computation for `max`, `min`, category totals, and monthly aggregations.
-4. **Autonomous Monthly Audit Agent (`budget_agent.py`):** Runs an agentic audit comparing month-over-month spending against customizable threshold limits, writes historical summaries to long-term memory, and dispatches native macOS notifications.
-5. **Continuous RAG Evaluation (`evaluate_rag.py`):** Includes an LLM-as-a-Judge benchmark suite grading Faithfulness, Answer Relevance, Numeric Accuracy, and Retrieval Quality out of 10.0.
-6. **Token Limiter & Session Memory:** Maintains multi-turn context using LangGraph's `MemorySaver` while automatically summarizing and trimming historical messages to prevent context window explosion.
+1. **Real-Time Ingestion:** Parse and log SMS-based bank/credit card notifications instantly via iOS Shortcuts and `/ingest` API.
+2. **Offline Sync:** Transactions are buffered to iCloud when offline and merged automatically when the server is available.
+3. **Hybrid RAG & Math Engine:** Combines semantic vector search (ChromaDB) with deterministic Python math for accurate financial queries.
+4. **Autonomous Monthly Audit:** Agentic audit of spending, customizable thresholds, historical summaries, and native macOS notifications.
+5. **Conversational Insights:** Chat with your expense data using a LangChain/LangGraph-powered agent with memory and token management.
+6. **Continuous RAG Evaluation:** LLM-as-a-Judge suite benchmarks faithfulness, relevance, numeric accuracy, and retrieval quality.
+7. **Secure & Isolated:** API key authentication, rate limiting, and optional Tailscale VPN for network isolation.
 
 ---
 
 ## 📁 Repository Structure
 
-```text
+```
 .
-├── .gitignore               # Excludes virtual environments, .env, and local ChromaDB files
-├── budget_agent.py          # Autonomous monthly audit agent & push notification runner
-├── chat_expenses.py         # Conversational RAG agent with hybrid search & memory management
-├── evaluate_rag.py          # LLM-as-a-Judge RAG evaluation benchmark suite
-├── ingest_transactions.py   # iCloud CSV watcher, deduplicating MD5 hasher & ChromaDB sync
-├── requirements.txt         # Project dependencies
-├── server.py                # FastAPI REST API with rate limiting, lifespan workers & endpoints
-├── start_server.sh          # Shell wrapper for background startup and environment setup
-└── test_delete.py           # Test utility for wiping and testing database states
+├── src/
+│   ├── server.py                  # FastAPI REST API, background workers, endpoints
+│   ├── agents/
+│   │   ├── chat_expenses.py       # Conversational RAG agent, hybrid search, memory
+│   │   └── budget_agent.py        # Monthly audit agent, notifications
+│   ├── evaluation/
+│   │   └── evaluate_rag.py        # RAG evaluation suite
+│   └── util/
+│       ├── ingest_transactions.py # iCloud CSV watcher, deduplication, ChromaDB sync
+│       └── delete_transaction_data.py # Utilities for deleting transactions
+├── finance_memory_db/             # ChromaDB vector store
+├── logs/                          # Log files for server, backup, budget
+├── requirements.txt               # Python dependencies
+├── start_server.sh                # Shell script for server startup
+└── README.md                      # Project documentation
 ```
 
 ---
@@ -76,37 +77,85 @@ flowchart TD
 ## 🛠 Tech Stack
 
 - **Framework:** FastAPI, Uvicorn, Pydantic v2
-- **Agent Framework:** LangChain, LangGraph, `MemorySaver`
+- **Agent Framework:** LangChain, LangGraph, MemorySaver
 - **Vector Database:** ChromaDB (`langchain-chroma`)
-- **LLM & Embeddings:** OpenAI `gpt-4o-mini`, `gpt-4o`, `text-embedding-3-small`
+- **LLM & Embeddings:** OpenAI (`gpt-4o-mini`, `gpt-4o`, `text-embedding-3-small`)
 - **Rate Limiting:** SlowAPI
-- **Networking & Security:** Tailscale (WireGuard CGNAT), Custom Header Authentication
+- **Scheduling:** Asyncio background tasks
+- **Networking & Security:** Tailscale (WireGuard), API key authentication
 
 ---
 
 ## 🚀 Setup & Installation
 
 ### 1. Prerequisites
-- macOS (recommended for native iCloud Drive integration)
+
+- macOS (recommended for iCloud integration)
 - Python 3.10+
 - OpenAI API Key
 
 ### 2. Clone and Setup Environment
+
 ```bash
 git clone <your-repo-url>
-cd expense-agent
-
-# Create and activate virtual environment
+cd expense-report-agent
 python3 -m venv venv
 source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
 ### 3. Environment Configuration
-Create a .env file in the root directory:
+
+Create a `.env` file in the root directory:
+
 ```
 OPENAI_API_KEY=sk-proj-your-openai-api-key
 API_SECRET_KEY=your_secure_random_api_key_for_shortcuts
+BASE_ICLOUD_DIR=/path/to/your/iCloud/Expense_DB_Backups
+SHORTCUTS_APP_CONTAINER_PATH=/path/to/Shortcuts/iCloud/container
 ```
+
+---
+
+## 🔌 API Endpoints
+
+- `POST /ingest`: Log a single transaction (used by iOS Shortcuts).
+- `POST /chat`: Conversational interface for querying expenses.
+- `POST /delete`: Remove transactions by ID.
+- `GET /status`: Health check endpoint.
+
+All endpoints require an `x-api-key` header for authentication.
+
+---
+
+## 📱 iOS Shortcuts & Offline Sync
+
+- **Online:** iOS Shortcut sends transaction data to `/ingest`.
+- **Offline:** Shortcut appends to `temp_transaction_data.csv` in iCloud. The server merges and processes this buffer automatically every 30 minutes or on wake.
+
+---
+
+## 📊 Monthly Budget Agent
+
+- Runs periodic audits of your monthly spending.
+- Compares against customizable thresholds.
+- Writes summaries to long-term memory and sends native macOS notifications.
+
+---
+
+## 🧪 RAG Evaluation Framework
+
+- Evaluates the RAG pipeline using LLM-as-a-Judge.
+- Benchmarks faithfulness, answer relevance, numeric accuracy, and retrieval quality.
+- Uses OpenAI models for unbiased scoring.
+
+---
+
+## 🔒 Security & Network Isolation
+
+- API key authentication for all endpoints.
+- Rate limiting to prevent abuse.
+- Optional Tailscale VPN for secure remote access.
+
+---
+

@@ -61,11 +61,12 @@ def get_monthly_transaction_summary(
     Reads the monthly CSV file directly and calculates exact totals, breakdowns, or specific date filters.
 
     MANDATORY USAGE RULES:
-    - For questions about TODAY, YESTERDAY, or a SPECIFIC DATE: You MUST pass `date_filter="DD-Mon-YYYY"` (e.g. date_filter="21-Aug-2026").
+    - For questions about TODAY, YESTERDAY, or a SPECIFIC DATE: pass `date_filter="DD-Mon-YYYY"`.
     - For questions about a specific merchant in a month: pass `merchant_filter="<merchant_name>"`.
     - For questions about a category in a month: pass `category_filter="<category_name>"`.
     - For full monthly breakdown: pass `month_year="Aug_2026"`.
     - For amount-based filtering: pass `amount_filter` with a comparison operator (e.g., ">1000", "<500", "=500").
+    - For highest/lowest expenses, spending breakdowns, or full monthly metrics: pass `month_year="Aug_2026"`.
 
     Args:
         month_year: Month identifier (e.g. 'Aug_2026', 'current')
@@ -129,66 +130,69 @@ def get_monthly_transaction_summary(
     if not records:
         return f"No transactions recorded for {os.path.basename(file_path)}."
 
-    # 1. Handle Merchant Filter (e.g. Zomato, Swiggy, Uber)
-    if merchant_filter:
-        filtered_by_merchant = [
-            r for r in records if merchant_filter.lower() in r["merchant"].lower()
-        ]
-        merchant_sum = sum(r["amount"] for r in filtered_by_merchant)
-        lines = [f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['category']}, {r['payment']})" for r in
-                 filtered_by_merchant]
+    # 1. Specific Date Filter
+    if date_filter:
+        clean_date = date_filter.strip().lower()
+        filtered_by_date = [r for r in records if clean_date in r["date"].lower()]
+        date_sum = sum(r["amount"] for r in filtered_by_date)
+        lines = [f"- ₹{r['amount']:,.2f} at {r['merchant']} ({r['category']}, {r['payment']})" for r in filtered_by_date]
+
+        if not filtered_by_date:
+            return f"No transactions recorded on {date_filter}."
 
         return (
-                f"Filtered Merchant Summary for '{merchant_filter}' in {os.path.basename(file_path)}:\n"
-                f"EXACT CALCULATED MERCHANT TOTAL: ₹{merchant_sum:,.2f}\n"
-                f"Transaction Count: {len(filtered_by_merchant)}\n"
-                f"Transactions:\n" + ("\n".join(lines) if lines else f"No transactions found for {merchant_filter}.")
+            f"Transactions on {date_filter} ({os.path.basename(file_path)}):\n"
+            f"EXACT CALCULATED DAILY TOTAL: ₹{date_sum:,.2f} ({len(filtered_by_date)} items)\n"
+            + "\n".join(lines)
         )
 
-    # 2. Handle Payment Mode Filter (e.g. Card vs UPI)
+    # 2. Merchant Filter
+    if merchant_filter:
+        filtered_by_merchant = [r for r in records if merchant_filter.lower() in r["merchant"].lower()]
+        merchant_sum = sum(r["amount"] for r in filtered_by_merchant)
+        lines = [f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['category']}, {r['payment']})" for r in filtered_by_merchant]
+
+        if not filtered_by_merchant:
+            return f"No transactions found for '{merchant_filter}' in {os.path.basename(file_path)}."
+
+        return (
+            f"Summary for '{merchant_filter}' in {os.path.basename(file_path)}:\n"
+            f"EXACT CALCULATED MERCHANT TOTAL: ₹{merchant_sum:,.2f} ({len(filtered_by_merchant)} items)\n"
+            + "\n".join(lines)
+        )
+
+    # 3. Payment Mode Filter
     if payment_mode_filter:
         clean_filter = payment_mode_filter.lower().replace("credit", "").replace("debit", "").strip()
-        filtered_by_pay = [
-            r for r in records if
-            clean_filter in r["payment"].lower() or payment_mode_filter.lower() in r["payment"].lower()
-        ]
+        filtered_by_pay = [r for r in records if clean_filter in r["payment"].lower() or payment_mode_filter.lower() in r["payment"].lower()]
         pay_sum = sum(r["amount"] for r in filtered_by_pay)
         lines = [f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['category']})" for r in filtered_by_pay]
 
+        if not filtered_by_pay:
+            return f"No transactions found for payment mode '{payment_mode_filter}' in {os.path.basename(file_path)}."
+
         return (
-                f"Filtered Payment Summary ({payment_mode_filter}) for {os.path.basename(file_path)}:\n"
-                f"EXACT CALCULATED PAYMENT TOTAL: ₹{pay_sum:,.2f}\n"
-                f"Transaction Count: {len(filtered_by_pay)}\n"
-                f"Transactions:\n" + ("\n".join(lines) if lines else "None")
+            f"Payment Breakdown for {payment_mode_filter} ({os.path.basename(file_path)}):\n"
+            f"EXACT CALCULATED TOTAL: ₹{pay_sum:,.2f} ({len(filtered_by_pay)} items)\n"
+            + "\n".join(lines)
         )
 
-    # 3. Handle Category Filter (e.g. Food & Drinks)
+    # 4. Category Filter
     if category_filter:
-        filtered_by_cat = [
-            r for r in records if
-            category_filter.lower() in r["category"].lower() or category_filter.lower() in r["merchant"].lower()
-        ]
+        filtered_by_cat = [r for r in records if category_filter.lower() in r["category"].lower() or category_filter.lower() in r["merchant"].lower()]
         cat_sum = sum(r["amount"] for r in filtered_by_cat)
         lines = [f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['payment']})" for r in filtered_by_cat]
+
+        if not filtered_by_cat:
+            return f"No transactions found for category '{category_filter}' in {os.path.basename(file_path)}."
+
         return (
-                f"Filtered Category Summary ({category_filter}) for {os.path.basename(file_path)}:\n"
-                f"EXACT CALCULATED TOTAL: ₹{cat_sum:,.2f}\n"
-                f"Transactions ({len(filtered_by_cat)} items):\n" + "\n".join(lines)
+            f"Category Summary for '{category_filter}' in {os.path.basename(file_path)}:\n"
+            f"EXACT CALCULATED TOTAL: ₹{cat_sum:,.2f} ({len(filtered_by_cat)} items)\n"
+            + "\n".join(lines)
         )
 
-    # 4. Handle Date Filter (e.g. 21-Aug-2026)
-    if date_filter:
-        filtered_by_date = [
-            r for r in records if date_filter.lower() in r["date"].lower()
-        ]
-        date_sum = sum(r["amount"] for r in filtered_by_date)
-        lines = [f"- ₹{r['amount']:,.2f} at {r['merchant']} ({r['category']}, {r['payment']})" for r in filtered_by_date]
-        return (
-            f"Filtered Date Summary ({date_filter}) for {os.path.basename(file_path)}:\n"
-            f"EXACT CALCULATED TOTAL: ₹{date_sum:,.2f}\n"
-            f"Transactions ({len(filtered_by_date)} items):\n" + "\n".join(lines) if lines else "No transactions found for this date."
-        )
-
+    # 5. Amount Filter
     if amount_filter:
         filtered_by_amount = [
             r for r in records if (
@@ -199,34 +203,35 @@ def get_monthly_transaction_summary(
         ]
         amount_sum = sum(r["amount"] for r in filtered_by_amount)
         lines = [f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['category']}, {r['payment']})" for r in filtered_by_amount]
+
+        if not filtered_by_amount:
+            return f"No transactions found matching amount filter '{amount_filter}' in {os.path.basename(file_path)}."
+
         return (
             f"Filtered Amount Summary ({amount_filter}) for {os.path.basename(file_path)}:\n"
             f"EXACT CALCULATED TOTAL: ₹{amount_sum:,.2f}\n"
             f"Transactions ({len(filtered_by_amount)} items):\n" + "\n".join(lines) if lines else "No transactions found for this amount filter."
         )
 
-    # 5. Full Month Overview
+    # 6. Full Month Overview
     records_sorted = sorted(records, key=lambda x: x["amount"], reverse=True)
     highest = records_sorted[0]
     lowest = records_sorted[-1]
 
-    category_breakdown = "\n".join(
-        [f"- {cat}: ₹{amt:,.2f}" for cat, amt in sorted(category_totals.items(), key=lambda x: x[1], reverse=True)])
-    payment_breakdown = "\n".join(
-        [f"- {pm}: ₹{amt:,.2f}" for pm, amt in sorted(payment_totals.items(), key=lambda x: x[1], reverse=True)])
-    top_txns = "\n".join(
-        [f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['category']}, {r['payment']})" for r in
-         records_sorted])
+    category_breakdown = ", ".join([f"{cat}: ₹{amt:,.2f}" for cat, amt in sorted(category_totals.items(), key=lambda x: x[1], reverse=True)])
+    payment_breakdown = ", ".join([f"{pm}: ₹{amt:,.2f}" for pm, amt in sorted(payment_totals.items(), key=lambda x: x[1], reverse=True)])
+    top_5_txns = "\n".join([f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['category']})" for r in records_sorted[:5]])
 
-    return (
-        f"Summary for {os.path.basename(file_path)}:\n"
-        f"EXACT CALCULATED MONTH TOTAL: ₹{total_spent:,.2f}\n"
-        f"Highest Expense: ₹{highest['amount']:,.2f} at {highest['merchant']} on {highest['date']}\n"
-        f"Lowest Expense: ₹{lowest['amount']:,.2f} at {lowest['merchant']} on {lowest['date']}\n"
-        f"\nPayment Method Breakdown:\n{payment_breakdown}\n"
-        f"\nCategory Breakdown:\n{category_breakdown}\n"
-        f"\nAll Transactions (Highest to Lowest):\n{top_txns}"
+    final_result = (
+        f"Overview for {os.path.basename(file_path)}:\n"
+        f"EXACT CALCULATED MONTH TOTAL: ₹{total_spent:,.2f} across {len(records)} transactions\n"
+        f"Highest Expense: ₹{highest['amount']:,.2f} at {highest['merchant']} on {highest['date']} ({highest['category']})\n"
+        f"Lowest Expense: ₹{lowest['amount']:,.2f} at {lowest['merchant']} on {lowest['date']} ({lowest['category']})\n"
+        f"Categories: {category_breakdown}\n"
+        f"Payment Modes: {payment_breakdown}\n"
+        f"Top 5 Highest Expenses:\n{top_5_txns}"
     )
+    return final_result
 
 def parse_date(date_str: str) -> tuple[bool, str] | tuple[bool, None]:
     """
@@ -312,24 +317,28 @@ def search_transactions(query: str) -> str:
     - Locating individual transaction dates/details (e.g., 'When did I buy shoes?').
 
     DO NOT USE THIS TOOL FOR:
-    - Aggregate metrics, total spend calculations, or monthly breakdowns (e.g., 'How much did I spend in August?').
-      Use the monthly summary tool instead.
+    - Aggregate metrics, total spend calculations, or monthly breakdowns. Use the monthly summary tool instead.
     """
     if not query or query.strip() in ["*", "all", "everything"]:
         query = "transaction expense spend"
 
     clean_query = query.strip()
+    semantic_text = clean_query
     raw_filters = {}
 
     # 1. Date filter (e.g., "21-Aug-2026", "today")
     date_match, date_val = parse_date(clean_query)
     if date_match and date_val:
         raw_filters["date"] = date_val
+        # Strip date from semantic text to avoid vector noise
+        semantic_text = re.sub(r"\b\d{1,2}-[A-Za-z]{3}-\d{4}\b", "", semantic_text, flags=re.IGNORECASE)
 
     # 2. Amount filter (e.g., "₹500", "140.56")
     amount_match, amount_val = extract_amount_from_query(clean_query)
     if amount_match and amount_val is not None:
         raw_filters["amount"] = float(amount_val)
+        # Strip amount and currency symbols from semantic text
+        semantic_text = re.sub(r"(?:₹|rs\.?|inr)?\s*\b\d+(?:,\d+)*(?:\.\d{1,2})?\b\s*(?:inr|rs\.?)?", "", semantic_text, flags=re.IGNORECASE)
 
     # 3. Category & Payment mode filters
     cat_val, pay_val = extract_category_and_payment(clean_query)
@@ -337,6 +346,11 @@ def search_transactions(query: str) -> str:
         raw_filters["category"] = cat_val
     if pay_val:
         raw_filters["payment"] = pay_val
+
+    # Clean residual whitespace
+    semantic_text = re.sub(r"\s+", " ", semantic_text).strip()
+    if not semantic_text:
+        semantic_text = "transaction expense spend"
 
     # 4. Construct Chroma-compliant filter ($and syntax for multiple conditions)
     chroma_filter = None
@@ -351,8 +365,8 @@ def search_transactions(query: str) -> str:
     if chroma_filter:
         try:
             results = vector_db.similarity_search(
-                query=clean_query,
-                k=20,
+                query=semantic_text,
+                k=8,
                 filter=chroma_filter
             )
         except Exception as e:
@@ -360,12 +374,12 @@ def search_transactions(query: str) -> str:
 
     # 6. Fallback to broad semantic similarity search
     if not results:
-        results = vector_db.similarity_search(clean_query, k=40)
+        results = vector_db.similarity_search(clean_query, k=10)
 
     if not results:
         return "No matching transactions found in database."
 
-    records = [f"- {doc.page_content}" for doc in results]
+    records = [f"- {doc.page_content.strip()}" for doc in results]
     return "Retrieved Records:\n" + "\n".join(records)
 
 def parse_transaction(metadata):
@@ -548,7 +562,10 @@ def get_effective_thread_id(base_thread_id: str = "iphone_chat_session") -> str:
 
 def query_agent_with_token_limit(user_query: str, thread_id: str = "iphone_chat_session"):
     effective_thread_id = get_effective_thread_id(thread_id)
-    config: RunnableConfig = {"configurable": {"thread_id": effective_thread_id}}
+    config: RunnableConfig = {
+        "configurable": {"thread_id": effective_thread_id},
+        "recursion_limit": 5
+    }
 
     tools = [search_transactions, search_transactions_to_delete, get_monthly_transaction_summary]
 
