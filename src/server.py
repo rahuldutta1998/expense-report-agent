@@ -239,12 +239,14 @@ async def chat_endpoint(
     body: ChatRequest,
     _api_key: str = Security(verify_api_key),
 ):
+    clean_query = body.query.strip().replace("“", "\"").replace("”", "\"")
+    print(f"📥 FastAPI received clean query: repr({repr(clean_query)})", flush=True)
     if not body.query.strip():
         raise HTTPException(status_code=400, detail="Query string cannot be empty.")
 
     try:
         reply_content = query_agent_with_token_limit(
-            user_query=body.query, thread_id=body.thread_id
+            user_query=clean_query, thread_id=body.thread_id
         )
         is_valid_json, response = is_json(reply_content)
         if is_valid_json:
