@@ -1,11 +1,12 @@
-from typing import List, Optional
+import uuid
+from typing import Optional
 from datetime import datetime
 from dotenv import load_dotenv
-from langchain.agents import create_agent
+from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 
-from chat_expenses import search_transactions, get_monthly_transaction_summary, get_system_prompt, checkpointer
+from src.agents.chat_expenses import query_agent_with_token_limit
 
 # Import your actual agent tools and query runner
 
@@ -79,17 +80,18 @@ def evaluate_single_turn(
     print(f"\n🧪 Running Test: '{user_query}'...")
 
     session_id = f"{test_session_id}_{int(datetime.now().timestamp())}"
-    config = {"configurable": {"thread_id": session_id}}
+    config: RunnableConfig = {
+        "configurable": {"thread_id": session_id},
+        "recursion_limit": 5
+    }
 
-    # Invoke agent
-    dynamic_agent = create_agent(
-        model=agent_llm,
-        tools=[search_transactions, get_monthly_transaction_summary],
-        system_prompt=get_system_prompt(),
-        checkpointer=checkpointer,
-    )
+    # Bad: Reusing the same thread accumulates 50 turns into 1 giant context
+    # response = query_agent_with_token_limit(test_query)
 
-    response = dynamic_agent.invoke({"messages": [("user", user_query)]}, config=config)
+    # Good: Isolated thread for each test case
+    test_thread = f"test_run_{uuid.uuid4().hex[:8]}"
+    response = query_agent_with_token_limit(user_query, thread_id=test_thread)
+
     messages = response.get("messages", [])
     response_text = messages[-1].content if messages else "No response generated."
 
@@ -144,6 +146,10 @@ BENCHMARK_TESTS = [
     {
         "query": "Did I pay any bills or services in July 2026?",
         "expected": "Must fetch July 2026 records categorized under 'Services' (e.g., Hathway, mobile recharge, rent) and list them with amounts."
+    },
+    {
+        "query": "What are the expenses I did today?",
+        "expected": f"Must resolve 'today' {datetime.now()} relative to the system date context, fetch records for that specific date only, or state zero expenses if none exist."
     },
 
     # --- 3. Sorting & Numerical Extremes (Max / Min) ---

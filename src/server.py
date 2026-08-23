@@ -3,6 +3,7 @@ import json
 import os
 import asyncio
 import secrets
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -16,12 +17,14 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 import uvicorn
 
-from chat_expenses import query_agent_with_token_limit
-from ingest_transactions import (
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from src.agents.chat_expenses import query_agent_with_token_limit
+from src.util.ingest_transactions import (
     BASE_ICLOUD_DIR,
     sync_csv_to_vector_db, restore_vector_db, get_records_by_id, delete_transaction_ids,
 )
-from delete_transaction_data import delete_transactions_from_csv
+from src.util.delete_transaction_data import delete_transactions_from_csv
 
 load_dotenv()
 
@@ -207,7 +210,7 @@ def health_check():
 @app.post("/ingest")
 async def ingest_single_transaction(
     payload: TransactionIngestRequest,
-    api_key: str = Security(verify_api_key)
+    _api_key: str = Security(verify_api_key)
 ):
     try:
         # 1. Append to master monthly CSV
@@ -234,14 +237,16 @@ async def ingest_single_transaction(
 async def chat_endpoint(
     request: Request,
     body: ChatRequest,
-    api_key: str = Security(verify_api_key),
+    _api_key: str = Security(verify_api_key),
 ):
+    clean_query = body.query.strip().replace("“", "\"").replace("”", "\"")
+    print(f"📥 FastAPI received clean query: repr({repr(clean_query)})", flush=True)
     if not body.query.strip():
         raise HTTPException(status_code=400, detail="Query string cannot be empty.")
 
     try:
         reply_content = query_agent_with_token_limit(
-            user_query=body.query, thread_id=body.thread_id
+            user_query=clean_query, thread_id=body.thread_id
         )
         is_valid_json, response = is_json(reply_content)
         if is_valid_json:
@@ -249,11 +254,12 @@ async def chat_endpoint(
         else:
             return ChatResponse(reply_type="text", reply=reply_content)
     except Exception as e:
+        print(str(e))
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
 
 
 @app.post("/sync", response_model=SyncResponse)
-async def trigger_sync(api_key: str = Security(verify_api_key)):
+async def trigger_sync(_api_key: str = Security(verify_api_key)):
     try:
         await asyncio.to_thread(process_offline_buffer)
         await asyncio.to_thread(sync_csv_to_vector_db)
@@ -262,12 +268,10 @@ async def trigger_sync(api_key: str = Security(verify_api_key)):
         raise HTTPException(status_code=500, detail=f"Sync error: {str(e)}")
 
 @app.post("/delete", response_model=DeleteResponse)
-async def delete_transactions(transaction_records : DeleteRequestBody) -> DeleteResponse:
-    """
-    Delete transactions from vector database and CSV
-    :param transaction_records:
-    :return DeleteResponse:
-    """
+async def delete_transactions(
+        transaction_records : DeleteRequestBody,
+        _api_key: str = Security(verify_api_key)) -> DeleteResponse:
+
     if not transaction_records:
         return DeleteResponse(message="No transactions provided for deletion.")
 

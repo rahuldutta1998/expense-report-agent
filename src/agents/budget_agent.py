@@ -1,7 +1,8 @@
 import csv
 import os
 import subprocess
-from datetime import datetime, timedelta
+import sys
+from datetime import datetime
 from typing import Dict, Optional
 
 from dotenv import load_dotenv
@@ -11,15 +12,18 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import BaseModel, Field
 
+load_dotenv()
+
+# Inserts project root directory to the start of Python search path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+
 # Ingest and Sync modules
-from ingest_transactions import (
+from src.util.ingest_transactions import (
     BASE_ICLOUD_DIR,
     DB_DIR,
-    download_current_csv,
     sync_csv_to_vector_db,
 )
-
-load_dotenv()
 
 # --- Initialize ChromaDB for Financial Rules & Summaries ---
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
