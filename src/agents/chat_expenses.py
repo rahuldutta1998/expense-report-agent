@@ -306,6 +306,97 @@ def extract_category_and_payment(query: str) -> Tuple[str | None, str | None]:
 
     return cat_match, pay_match
 
+def get_date_list(start_date: str, end_date: str) -> list[str]:
+    """
+    Generates a list of dates in DD-Mon-YYYY format between start_date and end_date (inclusive).
+    """
+    try:
+        start_dt = parser.parse(start_date)
+        end_dt = parser.parse(end_date)
+    except (ValueError, TypeError):
+        return []
+
+    if start_dt > end_dt:
+        return []
+
+    date_list = []
+    current_dt = start_dt
+    while current_dt <= end_dt:
+        date_list.append(current_dt.strftime("%d-%b-%Y"))
+        current_dt += relativedelta(days=1)
+
+    return date_list
+
+# @tool
+from dateutil import parser
+from langchain_core.tools import tool
+
+
+@tool
+def search_transaction_date_range(start_date: str, end_date: str) -> str:
+    """
+    Searches for transactions within a specific date range.
+    Returns calculated totals, category breakdowns, and a compact transaction list.
+    """
+    date_range_list = get_date_list(start_date, end_date)
+    if not date_range_list:
+        return f"Invalid date range: {start_date} to {end_date}. Please provide valid dates in DD-Mon-YYYY format."
+
+    filter_date = {
+        "$or": [{"date": d} for d in date_range_list]
+    }
+
+    try:
+        results = vector_db.similarity_search(
+            "transaction expense spend",
+            filter=filter_date, # type: ignore
+            k=100
+        )
+    except Exception as e:
+        return f"Error querying vector database for date range: {e}"
+
+    # Filter to exact dates in range & sort newest first
+    valid_docs = [
+        doc for doc in results
+        if doc.metadata and doc.metadata.get("date") in date_range_list
+    ]
+
+    if not valid_docs:
+        return f"No transactions found between {start_date} and {end_date}."
+
+    valid_docs = sorted(
+        valid_docs,
+        key=lambda x: parser.parse(str(x.metadata.get("date", "01-Jan-1970"))),
+        reverse=True
+    )
+
+    # 1. Deterministic Python Aggregations
+    total_amount = 0.0
+    category_totals = {}
+
+    for doc in valid_docs:
+        meta = doc.metadata or {}
+        category = meta.get("category", "Uncategorized")
+
+        raw_amt = str(meta.get("amount", "0")).replace(",", "").strip()
+        try:
+            amt = float(raw_amt)
+        except ValueError:
+            amt = 0.0
+
+        total_amount += amt
+        category_totals[category] = category_totals.get(category, 0.0) + amt
+
+    # 2. Build Category Summary String
+    cat_summary = ", ".join(
+        [f"{cat}: ₹{amt:,.2f}" for cat, amt in sorted(category_totals.items(), key=lambda x: x[1], reverse=True)]
+    )
+
+    return (
+        f"Date Range Summary ({start_date} to {end_date}):\n"
+        f"EXACT CALCULATED RANGE TOTAL: ₹{total_amount:,.2f} ({len(valid_docs)} transactions)\n"
+        f"Category Breakdown: {cat_summary}"
+    )
 
 @tool
 def search_transactions(query: str) -> str:
@@ -472,7 +563,12 @@ CRITICAL TOOL ROUTING RULES:
    - For queries like "smallest purchase", "lowest expense", "biggest purchase", "highest expense" in a month:
      Call `get_monthly_transaction_summary(month_year="<TargetMonth_YYYY>")`.
 
-5. DELETE CASE (Strict JSON Output Contract):
+5. DATE RANGE QUERIES:
+    - For queries like "between 21-Aug-2026 and 25-Aug-2026" or "What's the expense for last week or last two weeks?":
+    - Call `search_transaction_date_range(start_date="DD-Mon-YYYY", end_date="DD-Mon-YYYY")` with the extracted start and end dates.
+    - If the user asks for "last week" or "last two weeks", calculate the date range based on the current date and pass it to `search_transaction_date_range`.
+    
+6. DELETE CASE (Strict JSON Output Contract):
    - Proceed with deletion candidate search ONLY if the user explicitly asks to DELETE, REMOVE, DROP, or ERASE a transaction.
    - For deletion requests: Call `search_transactions_to_delete` with all extracted query filters.
    - Filter out all relevant matching transactions from the tool output.
@@ -575,7 +671,7 @@ def query_agent_with_token_limit(user_query: str, thread_id: str = "iphone_chat_
         "recursion_limit": 5
     }
 
-    tools = [search_transactions, search_transactions_to_delete, get_monthly_transaction_summary]
+    tools = [search_transactions, search_transactions_to_delete, get_monthly_transaction_summary, search_transaction_date_range]
 
     dynamic_agent = create_agent(
         model=model,
