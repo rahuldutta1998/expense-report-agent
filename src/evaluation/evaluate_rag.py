@@ -2,13 +2,11 @@ import uuid
 from typing import Optional
 from datetime import datetime
 from dotenv import load_dotenv
-from langchain.agents import create_agent
 from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 
-from src.agents.chat_expenses import search_transactions, get_monthly_transaction_summary, get_system_prompt, \
-    checkpointer, search_transactions_to_delete, query_agent_with_token_limit
+from src.agents.chat_expenses import query_agent_with_token_limit
 
 # Import your actual agent tools and query runner
 
@@ -86,14 +84,6 @@ def evaluate_single_turn(
         "configurable": {"thread_id": session_id},
         "recursion_limit": 5
     }
-
-    # Invoke agent
-    dynamic_agent = create_agent(
-        model=agent_llm,
-        tools=[search_transactions, get_monthly_transaction_summary, search_transactions_to_delete],
-        system_prompt=get_system_prompt(),
-        checkpointer=checkpointer,
-    )
 
     # Bad: Reusing the same thread accumulates 50 turns into 1 giant context
     # response = query_agent_with_token_limit(test_query)
