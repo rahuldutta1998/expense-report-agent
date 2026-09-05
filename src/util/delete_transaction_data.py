@@ -1,10 +1,7 @@
 import csv
 import os
 import shutil
-from typing import Any, Dict, List, Tuple
-
-from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
+from typing import Any, Dict, List
 
 BASE_ICLOUD_DIR = os.path.expanduser(
      os.getenv("BASE_ICLOUD_DIR", "")
@@ -13,14 +10,6 @@ BASE_ICLOUD_DIR = os.path.expanduser(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_DIR = os.path.join(BASE_DIR, "../../finance_memory_db")
 os.makedirs(DB_DIR, exist_ok=True)
-
-embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
-vector_db = Chroma(
-    collection_name="transaction_vectors",
-    embedding_function=embeddings,
-    persist_directory=DB_DIR,
-)
 
 def _resolve_csv_filepath(csv_path: str) -> str | None:
     """

@@ -11,7 +11,6 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -19,10 +18,12 @@ import uvicorn
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from src.models.models import IngestRecord, TransactionIngestRequest, ChatResponse, ChatRequest, SyncResponse, \
+    DeleteResponse, DeleteRequestBody
+from src.agents.add_expenses import process_expense_ingest
 from src.agents.chat_expenses import query_agent_with_token_limit
 from src.util.ingest_transactions import (
-    BASE_ICLOUD_DIR,
-    sync_csv_to_vector_db, restore_vector_db, get_records_by_id, delete_transaction_ids,
+    sync_csv_to_vector_db, restore_vector_db, get_records_by_id, delete_transaction_ids, append_transaction_to_csv
 )
 from src.util.delete_transaction_data import delete_transactions_from_csv
 
@@ -39,37 +40,6 @@ SHORTCUTS_APP_CONTAINER = os.path.expanduser(
 GENERIC_ICLOUD_CONTAINER = os.path.expanduser(
     os.getenv("GENERIC_ICLOUD_CONTAINER_PATH", "")
 )
-
-
-def get_csv_path_for_date(date_str: str) -> str:
-    """Returns absolute path to monthly CSV file in BASE_ICLOUD_DIR based on YYYY-MM-DD or DD-Mon-YYYY string."""
-    for fmt in ("%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
-        try:
-            dt = datetime.strptime(date_str.strip(), fmt)
-            return os.path.join(BASE_ICLOUD_DIR, dt.strftime("%b_%Y.csv"))
-        except ValueError:
-            continue
-    return os.path.join(BASE_ICLOUD_DIR, datetime.now().strftime("%b_%Y.csv"))
-
-
-def append_transaction_to_csv(date_str: str, merchant: str, amount: float, category: str, payment: str):
-    """Appends a single transaction to the corresponding monthly CSV file inside BASE_ICLOUD_DIR."""
-    csv_file_path = get_csv_path_for_date(date_str)
-    file_exists = os.path.exists(csv_file_path)
-
-    # Ensure trailing newline exists
-    if file_exists and os.path.getsize(csv_file_path) > 0:
-        with open(csv_file_path, "rb+") as check_f:
-            check_f.seek(-1, os.SEEK_END)
-            if check_f.read(1) != b"\n":
-                check_f.write(b"\n")
-
-    with open(csv_file_path, mode="a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists or os.path.getsize(csv_file_path) == 0:
-            writer.writerow(["Date", "Category", "Merchant", "Amount", "Payment"])
-
-        writer.writerow([date_str, category, merchant, f"{amount:.2f}", payment or "UPI"])
 
 
 def get_temp_buffer_path() -> str:
@@ -168,44 +138,21 @@ async def verify_api_key(x_api_key: str = Header(...)):
         raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
     return x_api_key
 
-
-class ChatRequest(BaseModel):
-    query: str = Field(..., description="Query string")
-    thread_id: str = Field(default="iphone_chat_session")
-
-
-class ChatResponse(BaseModel):
-    reply_type: str = Field(default="text", description="Type of reply, e.g., 'text', 'transaction'")
-    reply: str | list[dict]
-    status: str = "success"
-
-
-class SyncResponse(BaseModel):
-    message: str
-    status: str = "success"
-
-class DeleteResponse(BaseModel):
-    message: str
-
-class TransactionIngestRequest(BaseModel):
-    date: str = Field(..., description="YYYY-MM-DD or DD-Mon-YYYY", json_schema_extra={"example": "12-Aug-2026"})
-    merchant: str = Field(..., json_schema_extra={"example": "Starbucks"})
-    amount: float = Field(..., json_schema_extra={"example": 5.50})
-    category: str = Field(default="Uncategorized", json_schema_extra={"example": "Food & Dining"})
-    payment: str = Field(default="UPI", json_schema_extra={"example": "UPI"})
-    source_file: str = Field(default="", description="Optional source file name for reference", json_schema_extra={"example": "Aug_2026.csv"})
-
-class TransactionRecords(BaseModel):
-    id: str = Field(..., description="Deterministic transaction ID")
-    data: TransactionIngestRequest = Field(..., description="Transaction data with keys: date, category, merchant, amount, payment")
-
-class DeleteRequestBody(BaseModel):
-    transaction_records: list[TransactionRecords] = Field(..., description="List of transactions to delete")
-
 @app.get("/")
 def health_check():
     return {"status": "online", "message": "Expense RAG Server is running."}
 
+@app.post("/add-record")
+async def ingest_single_transaction_v2(
+        payload: IngestRecord,
+        _api_key: str = Security(verify_api_key),
+):
+    try:
+        response = process_expense_ingest(payload)
+        return response
+    except Exception as e:
+        print(e, flush=True)
+        raise HTTPException(status_code=400, detail=f"Internal server error: {e}")
 
 @app.post("/ingest")
 async def ingest_single_transaction(
@@ -305,7 +252,7 @@ async def delete_transactions(
         restore_vector_db(deleted_backup)
         return DeleteResponse(message="Unable to delete transactions from vector database.")
 
-    return DeleteResponse(message=f"Successfully deleted {len(deleted_ids)} transaction(s) from the vector database.")
+    return DeleteResponse(message=f"Successfully deleted {len(deleted_ids)} transactions." if len(deleted_ids) > 1 else "Successfully deleted 1 transaction.")
 
 def is_json(text: str) -> tuple[bool, Any] | bool:
     try:

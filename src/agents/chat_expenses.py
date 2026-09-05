@@ -6,20 +6,20 @@ import time
 import re
 from datetime import datetime
 from typing import Any, Tuple
-from dateutil import parser
 from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
+from dateutil import parser
 from langchain.agents import create_agent
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import AIMessage, ToolMessage
-from langchain_chroma import Chroma
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
-from pydantic import Field
-from pydantic.v1 import BaseModel
 
+from src.agents.add_expenses import get_categories_prompt_str
+from src.models.models import TransactionRecord
+from src.util.db import vector_db
 from src.util.ingest_transactions import sync_csv_to_vector_db
 
 load_dotenv()
@@ -28,25 +28,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_DIR = os.path.join(BASE_DIR, "../../finance_memory_db")
 os.makedirs(DB_DIR, exist_ok=True)
 
-embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
-vector_db = Chroma(
-    collection_name="transaction_vectors",
-    embedding_function=embeddings,
-    persist_directory=DB_DIR,
-)
-
 BASE_ICLOUD_DIR = os.path.expanduser(
     os.getenv("BASE_ICLOUD_DIR", "")
 )
-
-class TransactionRecord(BaseModel):
-    date: str = Field(..., description="YYYY-MM-DD or DD-Mon-YYYY", json_schema_extra={"example": "12-Aug-2026"})
-    merchant: str = Field(..., json_schema_extra={"example": "Starbucks"})
-    amount: float = Field(..., json_schema_extra={"example": 5.50})
-    category: str = Field(default="Uncategorized", json_schema_extra={"example": "Food & Dining"})
-    payment: str = Field(default="UPI", json_schema_extra={"example": "UPI"})
-    source_file: str = Field(default=None, json_schema_extra={"example": "Aug_2026.csv"})
 
 @tool
 def get_monthly_transaction_summary(
@@ -277,7 +261,7 @@ def extract_amount_from_query(query: str) -> tuple[bool, Any | None] | tuple[boo
 CATEGORY_SYNONYMS = {
     "Transport": ["transport", "transportation", "fuel", "petrol", "diesel", "cab", "uber", "ola", "auto", "metro", "parking", "toll"],
     "Food & Drinks": ["food", "drinks", "dining", "restaurant", "cafe", "coffee", "lunch", "dinner", "breakfast", "swiggy", "zomato"],
-    "Groceries": ["grocery", "groceries", "supermarket", "blinkit", "zepto", "instamart", "vegetables", "fruits", "milk"],
+    "Groceries": ["grocery", "groceries", "supermarket", "blinkit", "zepto", "Swiggy Insta", "instamart", "vegetables", "fruits", "milk"],
     "Shopping": ["shopping", "clothes", "apparel", "amazon", "flipkart", "electronics", "shoes"],
     "Bills & Utilities": ["bills", "utilities", "electricity", "water", "wifi", "broadband", "mobile", "recharge", "rent", "maintenance"],
     "Entertainment": ["entertainment", "movies", "cinema", "bookmyshow", "games", "playstation", "steam", "netflix", "spotify", "prime"],
@@ -327,13 +311,23 @@ def get_date_list(start_date: str, end_date: str) -> list[str]:
 
     return date_list
 
-# @tool
-from dateutil import parser
-from langchain_core.tools import tool
+def build_date_range_filter(date_range_list, merchant=None, category=None):
+    filters = [{"$or": [{"date": d} for d in date_range_list]}]
+    # Date range as $or
+    # Merchant filter
+    if merchant:
+        filters.append({"merchant": merchant})
+    # Category filter
+    if category:
+        filters.append({"category": category})
+    # Combine with $and if more than one filter
+    if len(filters) == 1:
+        return filters[0]
+    return {"$and": filters}
 
 
 @tool
-def search_transaction_date_range(start_date: str, end_date: str) -> str:
+def search_transaction_date_range(start_date: str, end_date: str, merchant: str = None) -> str:
     """
     Searches for transactions within a specific date range.
     Returns calculated totals, category breakdowns, and a compact transaction list.
@@ -348,7 +342,7 @@ def search_transaction_date_range(start_date: str, end_date: str) -> str:
 
     try:
         results = vector_db.similarity_search(
-            "transaction expense spend",
+            query = f"{merchant}" if merchant else "transaction expense spend",
             filter=filter_date, # type: ignore
             k=100
         )
@@ -358,7 +352,11 @@ def search_transaction_date_range(start_date: str, end_date: str) -> str:
     # Filter to exact dates in range & sort newest first
     valid_docs = [
         doc for doc in results
-        if doc.metadata and doc.metadata.get("date") in date_range_list
+        if (
+                (not merchant and doc.metadata.get("date") in date_range_list) or
+                (merchant and doc.metadata.get("merchant", "").strip().lower() == merchant.lower() and doc.metadata.get(
+                    "date") in date_range_list)
+        )
     ]
 
     if not valid_docs:
@@ -373,6 +371,7 @@ def search_transaction_date_range(start_date: str, end_date: str) -> str:
     # 1. Deterministic Python Aggregations
     total_amount = 0.0
     category_totals = {}
+    merchant_total = 0.0
 
     for doc in valid_docs:
         meta = doc.metadata or {}
@@ -386,6 +385,7 @@ def search_transaction_date_range(start_date: str, end_date: str) -> str:
 
         total_amount += amt
         category_totals[category] = category_totals.get(category, 0.0) + amt
+        merchant_total += amt if merchant and meta.get("merchant", "").strip().lower() == merchant.lower() else 0.0
 
     # 2. Build Category Summary String
     cat_summary = ", ".join(
@@ -396,6 +396,7 @@ def search_transaction_date_range(start_date: str, end_date: str) -> str:
         f"Date Range Summary ({start_date} to {end_date}):\n"
         f"EXACT CALCULATED RANGE TOTAL: ₹{total_amount:,.2f} ({len(valid_docs)} transactions)\n"
         f"Category Breakdown: {cat_summary}"
+        + (f"\nMerchant '{merchant}' Total: ₹{merchant_total:,.2f}" if merchant else "")
     )
 
 @tool
@@ -532,6 +533,10 @@ CURRENT CALENDAR CONTEXT:
 - Current Month: {current_month_str}
 - Last Month: {last_month_str}
 
+CATEGORY CONTEXT:
+- Check the user category and pass the correct category for further processing. If the category is not found, return 'Unknown'.
+- {get_categories_prompt_str()}
+
 STRICT SCOPE GUARDRAILS (FINANCE ONLY):
 - You are EXCLUSIVELY designed to assist with personal finances, expenses, transactions, budgets, and spending analytics.
 - If the user asks ANY non-financial question, politely decline.
@@ -566,13 +571,16 @@ CRITICAL TOOL ROUTING RULES:
 5. DATE RANGE QUERIES:
     - For queries like "between 21-Aug-2026 and 25-Aug-2026" or "What's the expense for last week or last two weeks?":
     - Call `search_transaction_date_range(start_date="DD-Mon-YYYY", end_date="DD-Mon-YYYY")` with the extracted start and end dates.
+    - If users also asks for particular merchant within that range, pass as `merchant` parameter to `search_transaction_date_range`.
     - If the user asks for "last week" or "last two weeks", calculate the date range based on the current date and pass it to `search_transaction_date_range`.
     
 6. DELETE CASE (Strict JSON Output Contract):
    - Proceed with deletion candidate search ONLY if the user explicitly asks to DELETE, REMOVE, DROP, or ERASE a transaction.
-   - For deletion requests: Call `search_transactions_to_delete` with all extracted query filters.
+   - For deletion requests: Call `search_transactions_to_delete` with all extracted query filters. For example if user mentions "Delete record from Zomato of 400 paid by Card on 26 Aug 2026", pass the query as "26-Aug-2026 400 Zomato Card"
+   - Based on the user query mention all the necessary filters in the query  
    - Filter out all relevant matching transactions from the tool output.
-   - If no transactions are found for deletion, return exactly: "No matching transactions found for deletion."
+   - If similar matching transactions are found (For example "Delete transaction for 300 to Apple paid by Card" but actual record is paid by UPI), return them in a raw JSON array format with below schema.
+   - If no transactions are found for deletion (For example record is totally unrelated or no similarities found), return exactly: "No matching transactions found for deletion."
    - Otherwise, you MUST respond ONLY with a raw, valid JSON array adhering strictly to this schema:
     [
       {{"id": "unique_vector_db_id", "data": {{"date": "...", "merchant": "...", "amount": 0.0, "category": "...", "payment": "...", "source_file": "..."}}}},
