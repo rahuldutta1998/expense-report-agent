@@ -18,7 +18,7 @@ USER_HOME = Path.home() if str(Path.home()) not in ("", ".") else Path(os.path.e
 
 # 3. iCloud Backup Directory: Reads from .env if defined, else defaults to standard macOS iCloud path
 DEFAULT_ICLOUD_DIR = USER_HOME / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "Expense_DB_Backups"
-ICLOUD_BACKUP_DIR = Path(os.getenv("ICLOUD_BACKUP_DIR", DEFAULT_ICLOUD_DIR))
+ICLOUD_BACKUP_DIR = Path(os.getenv("ICLOUD_BACKUP_DIR", str(DEFAULT_ICLOUD_DIR))).expanduser().resolve()
 
 # Ensure destination exists
 os.makedirs(str(ICLOUD_BACKUP_DIR), exist_ok=True)

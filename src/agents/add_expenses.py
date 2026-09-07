@@ -128,6 +128,9 @@ def process_expense_ingest(record: IngestRecord) -> IngestRecord:
         if not tx:
             tx = extract_transaction_from_sms(record.message)
 
+        if tx.amount and tx.amount < 50:
+            return record
+
         # Validate extracted category against allowed list
         validated_cat = normalize_and_validate_category(tx.category)
         tx.category = validated_cat if validated_cat else "Unknown"
