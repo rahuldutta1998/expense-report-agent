@@ -10,7 +10,7 @@ from langchain.agents import create_agent
 from langchain_chroma import Chroma
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from pydantic import BaseModel, Field
+from src.models.models import BudgetAnalysis
 
 load_dotenv()
 
@@ -104,29 +104,6 @@ def flush_temp_buffer():
         print("✅ Temp buffer merged.", flush=True)
     except Exception as e:
         print(f"⚠️ Error flushing buffer during audit: {e}", flush=True)
-
-
-# --- Output Schema ---
-class BudgetAnalysis(BaseModel):
-    month_year: str = Field(
-        description="The month and year audited, e.g., 'Aug_2026'."
-    )
-    total_spent: float = Field(
-        description="Total amount spent in the target month."
-    )
-    is_threshold_breached: bool = Field(
-        description="True if any category or overall spend exceeds limits."
-    )
-    breached_categories: str = Field(
-        description="Summary of which categories crossed their limits, or 'None'."
-    )
-    mom_comparison: str = Field(
-        description="Month-over-month comparison insights against past summaries."
-    )
-    alert_message: str = Field(
-        description="A concise, actionable 2-sentence summary/advice for the user."
-    )
-
 
 # --- Tools ---
 @tool
