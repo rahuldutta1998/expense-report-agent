@@ -18,3 +18,5 @@ logs/backup.err
 logs/backup.log
 logs/budget.log
 logs/budget.err
+/logs/ui.log
+/logs/ui.err

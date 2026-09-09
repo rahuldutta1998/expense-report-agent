@@ -11,3 +11,6 @@ langgraph
 chromadb
 python-dateutil
 tavily
+requests
+streamlit
+pandas

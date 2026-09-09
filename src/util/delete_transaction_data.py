@@ -3,6 +3,9 @@ import os
 import shutil
 from typing import Any, Dict, List
 
+from src.models.models import TransactionRecords, DeleteResponse
+from src.util.ingest_transactions import get_records_by_id, delete_transaction_ids, restore_vector_db
+
 BASE_ICLOUD_DIR = os.path.expanduser(
      os.getenv("BASE_ICLOUD_DIR", "")
 )
@@ -140,3 +143,34 @@ def delete_transactions_from_csv(transactions_to_delete: List[Dict[str, Any]]) -
                 except Exception as rollback_err:
                     raise f"Critical Rollback Error for {original_path}: {rollback_err}"
         return False
+
+def delete_transactions_records(transactions: List[TransactionRecords]) -> DeleteResponse:
+    records = transactions
+    deleted_ids = []
+    data = []
+    for record in records:
+        if record and record.id and record.data:
+            deleted_ids.append(record.id)
+            if hasattr(record.data, "model_dump"):
+                data.append(record.data.model_dump())
+            else:
+                data.append(record.data)
+
+    if not deleted_ids:
+        return DeleteResponse(message="No valid transaction IDs found for deletion.")
+
+    deleted_backup = get_records_by_id(deleted_ids)
+    if not deleted_backup:
+        return DeleteResponse(message="No matching transactions found in vector database for the provided IDs.")
+
+    try:
+        delete_transaction_ids(deleted_ids)
+        if not delete_transactions_from_csv(data):
+            raise Exception
+    except Exception as e:
+        print(f"Error deleting transactions: {e}", flush=True)
+        restore_vector_db(deleted_backup)
+        return DeleteResponse(message="Unable to delete transactions from vector database.")
+
+    return DeleteResponse(message=f"Successfully deleted {len(deleted_ids)} transactions." if len(
+        deleted_ids) > 1 else "Successfully deleted 1 transaction.")

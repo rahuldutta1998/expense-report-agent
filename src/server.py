@@ -3,7 +3,6 @@ import json
 import os
 import asyncio
 import secrets
-import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -16,16 +15,14 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 import uvicorn
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 from src.models.models import IngestRecord, TransactionIngestRequest, ChatResponse, ChatRequest, SyncResponse, \
     DeleteResponse, DeleteRequestBody
-from src.agents.add_expenses import process_expense_ingest
+from src.agents.add_expenses import process_expense_ingest, find_existing_category_in_db
 from src.agents.chat_expenses import query_agent_with_token_limit
 from src.util.ingest_transactions import (
-    sync_csv_to_vector_db, restore_vector_db, get_records_by_id, delete_transaction_ids, append_transaction_to_csv
+    sync_csv_to_vector_db, append_transaction_to_csv
 )
-from src.util.delete_transaction_data import delete_transactions_from_csv
+from src.util.delete_transaction_data import delete_transactions_records
 
 load_dotenv()
 
@@ -81,6 +78,8 @@ def process_offline_buffer():
                 date_str = row[0].strip() if len(row) > 0 else datetime.now().strftime("%Y-%m-%d")
                 category = row[1].strip() if len(row) > 1 else "Uncategorized"
                 merchant = row[2].strip() if len(row) > 2 else "Unknown"
+                if category == "Unknown":
+                    category = find_existing_category_in_db(merchant) or "Unknown"
                 raw_amount = row[3].strip() if len(row) > 3 else "0"
                 amount = float(raw_amount.replace(",", ""))
                 payment = row[4].strip() if len(row) > 4 else "UPI"
@@ -226,33 +225,8 @@ async def delete_transactions(
     if not records:
         return DeleteResponse(message="No transactions provided for deletion.")
 
-    deleted_ids = []
-    data = []
-    for record in records:
-        if record and record.id and record.data:
-            deleted_ids.append(record.id)
-            if hasattr(record.data, "model_dump"):
-                data.append(record.data.model_dump())
-            else:
-                data.append(record.data)
-
-    if not deleted_ids:
-        return DeleteResponse(message="No valid transaction IDs found for deletion.")
-
-    deleted_backup = get_records_by_id(deleted_ids)
-    if not deleted_backup:
-        return DeleteResponse(message="No matching transactions found in vector database for the provided IDs.")
-
-    try:
-        delete_transaction_ids(deleted_ids)
-        if not delete_transactions_from_csv(data):
-            raise Exception
-    except Exception as e:
-        print(f"Error deleting transactions: {e}", flush=True)
-        restore_vector_db(deleted_backup)
-        return DeleteResponse(message="Unable to delete transactions from vector database.")
-
-    return DeleteResponse(message=f"Successfully deleted {len(deleted_ids)} transactions." if len(deleted_ids) > 1 else "Successfully deleted 1 transaction.")
+    response = delete_transactions_records(records)
+    return response
 
 def is_json(text: str) -> tuple[bool, Any] | bool:
     try:

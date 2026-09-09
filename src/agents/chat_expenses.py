@@ -614,38 +614,60 @@ def summarize_and_trim_history(history_messages, max_raw_messages=6):
 def sanitize_message_history(messages: list) -> list:
     """
     Ensures every AIMessage with tool_calls is followed by all corresponding ToolMessages.
-    Removes orphaned tool calls that would trigger OpenAI 400 errors.
+    Explicitly strips both tool_calls and additional_kwargs to prevent OpenAI 400 errors.
     """
     valid_messages = []
     i = 0
     while i < len(messages):
         msg = messages[i]
 
-        # Check if message is an AI message requesting tool calls
-        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-            expected_ids = {tc["id"] for tc in msg.tool_calls}
+        # Check for tool_calls in either standard or raw OpenAI kwargs
+        has_tool_calls = bool(
+            getattr(msg, "tool_calls", None) or
+            (isinstance(msg, AIMessage) and msg.additional_kwargs.get("tool_calls"))
+        )
+
+        if isinstance(msg, AIMessage) and has_tool_calls:
+            # Extract expected IDs from both possible locations
+            expected_ids = set()
+            if getattr(msg, "tool_calls", None):
+                expected_ids.update(tc["id"] for tc in msg.tool_calls if "id" in tc)
+            if msg.additional_kwargs.get("tool_calls"):
+                expected_ids.update(tc["id"] for tc in msg.additional_kwargs["tool_calls"] if "id" in tc)
+
             tool_responses = []
+            j = i + 1
 
             # Look ahead for matching ToolMessages
-            j = i + 1
             while j < len(messages) and isinstance(messages[j], ToolMessage):
                 if messages[j].tool_call_id in expected_ids:
                     tool_responses.append(messages[j])
                 j += 1
 
-            # Only keep the tool turn if ALL tool_call_ids have responses
             found_ids = {tm.tool_call_id for tm in tool_responses}
-            if expected_ids == found_ids:
+
+            # Only retain if EVERY tool_call_id received a response
+            if expected_ids and expected_ids == found_ids:
                 valid_messages.append(msg)
                 valid_messages.extend(tool_responses)
-                i = j
+                i = j  # Jump past the validated tool messages
                 continue
             else:
-                # Discard the broken tool_calls from the AIMessage or drop it
-                msg = AIMessage(content=msg.content or "...")
-                valid_messages.append(msg)
-                i += 1
+                # Strip tool_calls entirely by wiping additional_kwargs & tool_calls
+                clean_kwargs = {k: v for k, v in msg.additional_kwargs.items() if k != "tool_calls"}
+                sanitized_ai_msg = AIMessage(
+                    content=msg.content or "Checking transactions...",
+                    additional_kwargs=clean_kwargs,
+                    tool_calls=[]
+                )
+                valid_messages.append(sanitized_ai_msg)
+                i = j
                 continue
+
+        # Skip orphan ToolMessages that have no preceding AIMessage
+        if isinstance(msg, ToolMessage):
+            i += 1
+            continue
 
         valid_messages.append(msg)
         i += 1

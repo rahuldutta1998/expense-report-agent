@@ -14,10 +14,6 @@ from src.models.models import BudgetAnalysis
 
 load_dotenv()
 
-# Inserts project root directory to the start of Python search path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-
 # Ingest and Sync modules
 from src.util.ingest_transactions import (
     BASE_ICLOUD_DIR,
