@@ -1,15 +1,10 @@
 import json
 import os
-import sys
 import pandas as pd
 import requests
 import streamlit as st
 from datetime import datetime
 from dotenv import load_dotenv
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
 
 from src.agents.add_expenses import ALLOWED_CATEGORIES
 from src.models.models import ChatRequest, ChatResponse, TransactionIngestRequest, TransactionRecords, IngestRecord
