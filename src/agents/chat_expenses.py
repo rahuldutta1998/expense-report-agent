@@ -32,34 +32,10 @@ BASE_ICLOUD_DIR = os.path.expanduser(
     os.getenv("BASE_ICLOUD_DIR", "")
 )
 
-@tool
-def get_monthly_transaction_summary(
-    month_year: str = "",
-    date_filter: str = "",
-    category_filter: str = "",
-    payment_mode_filter: str = "",
-    merchant_filter: str = "",
-    amount_filter: str = "",
-) -> str:
-    """
-    Reads the monthly CSV file directly and calculates exact totals, breakdowns, or specific date filters.
+MAX_RECORD_FETCH_LIMIT = 10
+ALLOWED_SYMBOLS = {"^", "$"}
 
-    MANDATORY USAGE RULES:
-    - For questions about TODAY, YESTERDAY, or a SPECIFIC DATE: pass `date_filter="DD-Mon-YYYY"`.
-    - For questions about a specific merchant in a month: pass `merchant_filter="<merchant_name>"`.
-    - For questions about a category in a month: pass `category_filter="<category_name>"`.
-    - For full monthly breakdown: pass `month_year="Aug_2026"`.
-    - For amount-based filtering: pass `amount_filter` with a comparison operator (e.g., ">1000", "<500", "=500").
-    - For highest/lowest expenses, spending breakdowns, or full monthly metrics: pass `month_year="Aug_2026"`.
-
-    Args:
-        month_year: Month identifier (e.g. 'Aug_2026', 'current')
-        date_filter: Specific date in 'DD-Mon-YYYY' format (e.g. '21-Aug-2026')
-        category_filter: Optional category name
-        payment_mode_filter: Optional payment method (e.g. 'UPI', 'Card')
-        merchant_filter: Optional merchant name (e.g. 'Swiggy', 'Zomato')
-        amount_filter: Optional amount filter (e.g. '>1000', '<500', '=500')
-    """
+def get_all_records_from_csv(month_year: str) -> tuple[list[dict], dict, dict, float, str]:
     if not month_year or month_year.strip().lower() in ["current", "this month", "latest", ""]:
         month_year = datetime.now().strftime("%b_%Y")
 
@@ -79,7 +55,7 @@ def get_monthly_transaction_summary(
         if matched:
             file_path = matched[0]
         else:
-            return f"No CSV record found for {month_year} in Transaction_Record directory."
+            return [], {}, {}, 0, file_path
 
     records = []
     category_totals = {}
@@ -110,94 +86,20 @@ def get_monthly_transaction_summary(
                 payment_totals[payment] = payment_totals.get(payment, 0.0) + amount
             except (ValueError, AttributeError):
                 continue
+    return records, category_totals, payment_totals, total_spent, file_path
 
+@tool
+def get_monthly_transaction_summary(
+    month_year: str = ""
+) -> str:
+    """
+    Reads the monthly CSV file directly and calculates exact totals, breakdowns, or specific date filters.
+    Return a human-readable summary of the monthly transactions, including highest and lowest expenses, category and payment breakdowns, and top 5 highest expenses.
+    """
+    records, category_totals, payment_totals, total_spent, file_path = get_all_records_from_csv(month_year)
     if not records:
         return f"No transactions recorded for {os.path.basename(file_path)}."
 
-    # 1. Specific Date Filter
-    if date_filter:
-        clean_date = date_filter.strip().lower()
-        filtered_by_date = [r for r in records if clean_date in r["date"].lower()]
-        date_sum = sum(r["amount"] for r in filtered_by_date)
-        lines = [f"- ₹{r['amount']:,.2f} at {r['merchant']} ({r['category']}, {r['payment']})" for r in filtered_by_date]
-
-        if not filtered_by_date:
-            return f"No transactions recorded on {date_filter}."
-
-        return (
-            f"Transactions on {date_filter} ({os.path.basename(file_path)}):\n"
-            f"EXACT CALCULATED DAILY TOTAL: ₹{date_sum:,.2f} ({len(filtered_by_date)} items)\n"
-            + "\n".join(lines)
-        )
-
-    # 2. Merchant Filter
-    if merchant_filter:
-        filtered_by_merchant = [r for r in records if merchant_filter.lower() in r["merchant"].lower()]
-        merchant_sum = sum(r["amount"] for r in filtered_by_merchant)
-        lines = [f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['category']}, {r['payment']})" for r in filtered_by_merchant]
-
-        if not filtered_by_merchant:
-            return f"No transactions found for '{merchant_filter}' in {os.path.basename(file_path)}."
-
-        return (
-            f"Summary for '{merchant_filter}' in {os.path.basename(file_path)}:\n"
-            f"EXACT CALCULATED MERCHANT TOTAL: ₹{merchant_sum:,.2f} ({len(filtered_by_merchant)} items)\n"
-            + "\n".join(lines)
-        )
-
-    # 3. Payment Mode Filter
-    if payment_mode_filter:
-        clean_filter = payment_mode_filter.lower().replace("credit", "").replace("debit", "").strip()
-        filtered_by_pay = [r for r in records if clean_filter in r["payment"].lower() or payment_mode_filter.lower() in r["payment"].lower()]
-        pay_sum = sum(r["amount"] for r in filtered_by_pay)
-        lines = [f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['category']})" for r in filtered_by_pay]
-
-        if not filtered_by_pay:
-            return f"No transactions found for payment mode '{payment_mode_filter}' in {os.path.basename(file_path)}."
-
-        return (
-            f"Payment Breakdown for {payment_mode_filter} ({os.path.basename(file_path)}):\n"
-            f"EXACT CALCULATED TOTAL: ₹{pay_sum:,.2f} ({len(filtered_by_pay)} items)\n"
-            + "\n".join(lines)
-        )
-
-    # 4. Category Filter
-    if category_filter:
-        filtered_by_cat = [r for r in records if category_filter.lower() in r["category"].lower() or category_filter.lower() in r["merchant"].lower()]
-        cat_sum = sum(r["amount"] for r in filtered_by_cat)
-        lines = [f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['payment']})" for r in filtered_by_cat]
-
-        if not filtered_by_cat:
-            return f"No transactions found for category '{category_filter}' in {os.path.basename(file_path)}."
-
-        return (
-            f"Category Summary for '{category_filter}' in {os.path.basename(file_path)}:\n"
-            f"EXACT CALCULATED TOTAL: ₹{cat_sum:,.2f} ({len(filtered_by_cat)} items)\n"
-            + "\n".join(lines)
-        )
-
-    # 5. Amount Filter
-    if amount_filter:
-        filtered_by_amount = [
-            r for r in records if (
-                (amount_filter.startswith(">") and r["amount"] > float(amount_filter[1:])) or
-                (amount_filter.startswith("<") and r["amount"] < float(amount_filter[1:])) or
-                (amount_filter.startswith("=") and r["amount"] == float(amount_filter))
-            )
-        ]
-        amount_sum = sum(r["amount"] for r in filtered_by_amount)
-        lines = [f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['category']}, {r['payment']})" for r in filtered_by_amount]
-
-        if not filtered_by_amount:
-            return f"No transactions found matching amount filter '{amount_filter}' in {os.path.basename(file_path)}."
-
-        return (
-            f"Filtered Amount Summary ({amount_filter}) for {os.path.basename(file_path)}:\n"
-            f"EXACT CALCULATED TOTAL: ₹{amount_sum:,.2f}\n"
-            f"Transactions ({len(filtered_by_amount)} items):\n" + "\n".join(lines) if lines else "No transactions found for this amount filter."
-        )
-
-    # 6. Full Month Overview
     records_sorted = sorted(records, key=lambda x: x["amount"], reverse=True)
     highest = records_sorted[0]
     lowest = records_sorted[-1]
@@ -216,6 +118,128 @@ def get_monthly_transaction_summary(
         f"Top 5 Highest Expenses:\n{top_5_txns}"
     )
     return final_result
+
+@tool
+def global_filter_search(
+    month_year: str = "",
+    date_filter: str = "",
+    category_filter: str = "",
+    payment_mode_filter: str = "",
+    merchant_filter: str = "",
+    amount_filter: str = "",
+    last_nth_record_filter: str = "",
+) -> str :
+    """
+    Searches across all CSV files in the iCloud directory for transactions matching the provided filters.
+    Returns a summary of matching transactions, including totals and breakdowns.
+
+     MANDATORY USAGE RULES:
+    - For questions about TODAY, YESTERDAY, or a SPECIFIC DATE: pass `date_filter="DD-Mon-YYYY"`.
+    - For questions about a specific merchant in a month: pass `merchant_filter="<merchant_name>"`.
+    - For questions about a category in a month: pass `category_filter="<category_name>"`.
+    - For full monthly breakdown: pass `month_year="Aug_2026"`.
+    - For amount-based filtering: pass `amount_filter` with a comparison operator (e.g., ">1000", "<500", "=500").
+    - For highest/lowest expenses, spending breakdowns, or full monthly metrics: pass `month_year="Aug_2026"`.
+    - For last N transactions in a month: pass `last_nth_record_filter="^N"` or `last_nth_record_filter="$N"` (e.g., $5 for last 5 transactions or ^10 for first 10 transactions).
+
+    Args:
+        month_year: Month identifier (e.g. 'Aug_2026', 'current')
+        date_filter: Specific date in 'DD-Mon-YYYY' format (e.g. '21-Aug-2026')
+        category_filter: Optional category name
+        payment_mode_filter: Optional payment method (e.g. 'UPI', 'Card')
+        merchant_filter: Optional merchant name (e.g. 'Swiggy', 'Zomato')
+        amount_filter: Optional amount filter (e.g. '>1000', '<500', '=500')
+        last_nth_record_filter: Optional Nth record filter (e.g. '5')
+    """
+    if not month_year:
+        return "Month-year is required for filtering. Please provide a valid month (e.g., 'Aug_2026')."
+
+    all_records,_, _, _, file_path = get_all_records_from_csv(month_year)
+
+    if not all_records:
+        return "No transactions found across all CSV files."
+
+    reverse = True
+    last_nth_record = 0
+    if last_nth_record_filter and last_nth_record_filter[0] in ALLOWED_SYMBOLS:
+        last_nth_record = int(last_nth_record_filter[1:])
+        symbol = last_nth_record_filter[0]
+        reverse = {"$": True, "^": False}.get(symbol, True)
+    elif last_nth_record_filter and last_nth_record_filter[0].isdigit():
+        last_nth_record = int(last_nth_record_filter[0:])
+        reverse = True
+
+    # Apply filters
+    filtered_records = all_records
+    if date_filter:
+        clean_date = date_filter.strip().lower()
+        filtered_records = [r for r in filtered_records if clean_date in r["date"].lower()]
+    if category_filter:
+        filtered_records = [r for r in filtered_records if category_filter.lower() in r["category"].lower()]
+    if merchant_filter:
+        filtered_records = [r for r in filtered_records if merchant_filter.lower() in r["merchant"].lower()]
+    if payment_mode_filter:
+        clean_filter = payment_mode_filter.lower().replace("credit", "").replace("debit", "").strip()
+        filtered_records = [r for r in filtered_records if clean_filter in r["payment"].lower() or payment_mode_filter.lower() in r["payment"].lower()]
+    if amount_filter:
+        filtered_records = [
+            r for r in filtered_records if (
+                    (amount_filter.startswith(">") and r["amount"] > float(amount_filter[1:])) or
+                    (amount_filter.startswith("<") and r["amount"] < float(amount_filter[1:])) or
+                    (amount_filter.startswith("=") and r["amount"] == float(amount_filter))
+            )
+        ]
+    total_records = len(filtered_records)
+    filtered_sum = sum(r["amount"] for r in filtered_records[:last_nth_record])
+
+    if last_nth_record_filter:
+        max_record = min(int(last_nth_record), MAX_RECORD_FETCH_LIMIT)
+        filtered_records = sorted(filtered_records, key=lambda x: parser.parse(x["date"]), reverse=reverse)[:max_record]
+    else:
+        filtered_records = sorted(filtered_records, key=lambda x: parser.parse(x["date"]), reverse=reverse)
+    amount_sum = sum(r["amount"] for r in filtered_records)
+
+    filter_parts = []
+    if date_filter:
+        filter_parts.append(f"Date Filter: {date_filter}")
+    if merchant_filter:
+        filter_parts.append(f"Merchant Filter: {merchant_filter}")
+    if category_filter:
+        filter_parts.append(f"Category Filter: {category_filter}")
+    if payment_mode_filter:
+        filter_parts.append(f"Payment Mode Filter: {payment_mode_filter}")
+    if amount_filter:
+        filter_parts.append(f"Amount Filter: {amount_filter}")
+
+    filters_str = ", ".join(filter_parts)
+    direction = {True: "last", False: "first"}.get(reverse, "\b")
+    if filters_str:
+        filters_str = "for filters - " + filters_str
+
+    if 0 < last_nth_record <= MAX_RECORD_FETCH_LIMIT:
+        limit_msg = ""
+        transactions_msg = f"Here are the {direction} {last_nth_record} transactions from {os.path.basename(file_path)}:\n" + \
+                            "\n".join([f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['category']}, {r['payment']})" for r in filtered_records])
+    elif last_nth_record > MAX_RECORD_FETCH_LIMIT:
+        limit_msg = f"Maximum {MAX_RECORD_FETCH_LIMIT} are records allowed for display\n"
+        transactions_msg = f"Here are the {direction} {min(len(filtered_records), MAX_RECORD_FETCH_LIMIT)} transactions from {os.path.basename(file_path)}:\n" + \
+                            "\n".join([f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['category']}, {r['payment']})" for r in filtered_records[:MAX_RECORD_FETCH_LIMIT]])
+    else:
+        limit_msg = ""
+        transactions_msg = f"Here are the {direction} {min(len(filtered_records), MAX_RECORD_FETCH_LIMIT)} transactions from {os.path.basename(file_path)}:\n" + \
+                           "\n".join([f"- ₹{r['amount']:,.2f} at {r['merchant']} on {r['date']} ({r['category']}, {r['payment']})" for r in filtered_records[:MAX_RECORD_FETCH_LIMIT]])
+
+
+    return (
+        f"Filtered Transactions Summary:\n"
+        f"{filters_str}\n"
+        f"Total Transactions Found: {total_records}\n"
+        f"EXACT CALCULATED TOTAL AMOUNT: ₹{amount_sum:,.2f} for {len(filtered_records)} transactions\n"
+        f"EXACT CALCULATED TOTAL AMOUNT FOR REQUESTED {last_nth_record} is ₹{filtered_sum:,.2f}"
+        f"{limit_msg}"
+        f"{transactions_msg}" if len(filtered_records) > 0 else ""
+    )
+
 
 def parse_date(date_str: str) -> tuple[bool, str] | tuple[bool, None]:
     """
@@ -545,36 +569,54 @@ CRITICAL TOOL ROUTING RULES:
 
 1. DAILY & RECENT QUERIES (Today, Yesterday, Specific Date):
    - When the user asks "What did I spend today?", "Show today's expenses", or asks about yesterday / a specific date:
-     You MUST call `get_monthly_transaction_summary` with BOTH `month_year` and `date_filter`:
-     -> For TODAY: `get_monthly_transaction_summary(month_year="{current_month_str}", date_filter="{today_date_only}")`
-     -> For YESTERDAY: `get_monthly_transaction_summary(month_year="{current_month_str}", date_filter="{yesterday_date_only}")`
-     -> For ANY OTHER DATE: `get_monthly_transaction_summary(month_year="<TargetMonth_YYYY>", date_filter="DD-Mon-YYYY")`
+     You MUST call `global_filter_search` with BOTH `month_year` and `date_filter`:
+     -> For TODAY: `global_filter_search(month_year="{current_month_str}", date_filter="{today_date_only}")`
+     -> For YESTERDAY: `global_filter_search(month_year="{current_month_str}", date_filter="{yesterday_date_only}")`
+     -> For ANY OTHER DATE: `global_filter_search(month_year="<TargetMonth_YYYY>", date_filter="DD-Mon-YYYY")`
    - NEVER omit `date_filter` when the user asks about a specific day.
 
 2. EXPLICIT MONTH-BOUND QUERIES (User specifically mentions a month or "this month" / "last month"):
    - ONLY call `get_monthly_transaction_summary` when a month is EXPLICITLY mentioned in the user prompt (e.g., "in August", "this month", "last month", "in July").
-   - For merchant in a specific month: `get_monthly_transaction_summary(month_year="<TargetMonth_YYYY>", merchant_filter="<name>")`
-   - For category in a specific month: `get_monthly_transaction_summary(month_year="<TargetMonth_YYYY>", category_filter="<category>")`
    - For overall monthly summary: `get_monthly_transaction_summary(month_year="<TargetMonth_YYYY>")`
+   - For merchant in a specific month: `global_filter_search(month_year="<TargetMonth_YYYY>", merchant_filter="<name>")`
+   - For category in a specific month: `global_filter_search(month_year="<TargetMonth_YYYY>", category_filter="<category>")`
 
-3. OPEN-ENDED / ALL-TIME LOOKUPS (NO Month Mentioned in Prompt):
+3. ADVANCED FILTER BASED QUERIES (User mentions merchant, category, payment mode, or amount in a month):
+   - If the user asks for a specific merchant, category, payment mode, or amount in a month (e.g., "How much did I spend on Zomato in August?", "Show me all UPI payments in July", "Find all expenses above 1000 in this month"):
+     You MUST call `global_filter_search` with the appropriate filters:
+     - For merchant: `global_filter_search(month_year="<TargetMonth_YYYY>", merchant_filter="<merchant_name>")`
+     - For category: `global_filter_search(month_year="<TargetMonth_YYYY>", category_filter="<category_name>")`
+     - For payment mode: `global_filter_search(month_year="<TargetMonth_YYYY>", payment_mode_filter="<payment_mode>")`
+     - For amount: `global_filter_search(month_year="<TargetMonth_YYYY>", amount_filter="<amount_condition>")` (e.g., ">1000", "<500", "=500")
+     - If the user asks for last N transactions in a month, you MUST call `global_filter_search(month_year="<TargetMonth_YYYY>", last_nth_record_filter=N)` with the extracted N.
+     - User can ask for a specific filter with N (e.g., "Show me last 5 transactions from Zomato in August"), you MUST pass both the merchant and last_nth_record_filter to `global_filter_search`.
+   - For queries like "last 5 transactions", "recent 3 expenses". Call `global_filter_search(month_year="<TargetMonth_YYYY>", last_nth_record_filter="^N")` with the extracted N.
+   - Use "^N" or first N transactions if the user asks for "first N" and "$N" or last N transactions if the user asks for "last N" or "latest N" or "recent N".
+   - If user doesn't mention first or last but just says "N transactions", just pass "N" transactions. Call `global_filter_search(month_year="<TargetMonth_YYYY>", last_nth_record_filter="N")`.
+   - If the user does not specify a month, default to the current month.
+   - If user mentions specific terms like 'latest', 'recent', 'last', 'first' etc, call global_filter_search with provided filters and month.
+   - If user asks for total amount, display the sum along with total number of records for the sum N transactions if mentioned.
+   - Maximum N allowed is {MAX_RECORD_FETCH_LIMIT}. If the user asks for more than {MAX_RECORD_FETCH_LIMIT}, return only the last {MAX_RECORD_FETCH_LIMIT} transactions.
+   - If user asks more than {MAX_RECORD_FETCH_LIMIT}, respond with: "Maximum {MAX_RECORD_FETCH_LIMIT} are allowed. Here are the last {MAX_RECORD_FETCH_LIMIT} transactions."
+
+4. OPEN-ENDED / ALL-TIME LOOKUPS (NO Month Mentioned in Prompt):
    - MANDATORY: If the user asks about a merchant, item, or category WITHOUT naming a specific month (e.g., "How much did I spend on Blinkit?", "How much on Razorpay?", "Did I spend on movies?", "Find all shoe purchases"):
      DO NOT ASSUME THE CURRENT MONTH. DO NOT call `get_monthly_transaction_summary`.
      You MUST call `search_transactions(query="<merchant_or_item>")`.
    - Pass ONLY the merchant or item keyword (e.g., query="Blinkit", query="Razorpay", query="movies").
    - Respond in natural human-readable text summarizing all-time matches found across all returned dates.
 
-4. SMALLEST/LARGEST PURCHASES:
+5. SMALLEST/LARGEST PURCHASES:
    - For queries like "smallest purchase", "lowest expense", "biggest purchase", "highest expense" in a month:
      Call `get_monthly_transaction_summary(month_year="<TargetMonth_YYYY>")`.
 
-5. DATE RANGE QUERIES:
+6. DATE RANGE QUERIES:
     - For queries like "between 21-Aug-2026 and 25-Aug-2026" or "What's the expense for last week or last two weeks?":
     - Call `search_transaction_date_range(start_date="DD-Mon-YYYY", end_date="DD-Mon-YYYY")` with the extracted start and end dates.
     - If users also asks for particular merchant within that range, pass as `merchant` parameter to `search_transaction_date_range`.
     - If the user asks for "last week" or "last two weeks", calculate the date range based on the current date and pass it to `search_transaction_date_range`.
     
-6. DELETE CASE (Strict JSON Output Contract):
+7. DELETE CASE (Strict JSON Output Contract):
    - Proceed with deletion candidate search ONLY if the user explicitly asks to DELETE, REMOVE, DROP, or ERASE a transaction.
    - For deletion requests: Call `search_transactions_to_delete` with all extracted query filters. For example if user mentions "Delete record from Zomato of 400 paid by Card on 26 Aug 2026", pass the query as "26-Aug-2026 400 Zomato Card"
    - Based on the user query mention all the necessary filters in the query  
@@ -701,7 +743,7 @@ def query_agent_with_token_limit(user_query: str, thread_id: str = "iphone_chat_
         "recursion_limit": 5
     }
 
-    tools = [search_transactions, search_transactions_to_delete, get_monthly_transaction_summary, search_transaction_date_range]
+    tools = [global_filter_search, search_transactions, search_transactions_to_delete, get_monthly_transaction_summary, search_transaction_date_range]
 
     dynamic_agent = create_agent(
         model=model,
