@@ -6,33 +6,10 @@ from langchain_openai import ChatOpenAI
 from tavily import TavilyClient
 
 from src.models.models import IngestRecord, TransactionIngestRequest
-from src.util.db import vector_db
 from src.util.ingest_transactions import save_and_sync_single_transaction
+from src.util.utilities import ALLOWED_CATEGORIES, get_categories_prompt_str, get_merchant_name
 
 load_dotenv()
-
-# --- 1. Master Category Definitions ---
-ALLOWED_CATEGORIES = [
-    "Food & Drinks",
-    "Groceries",
-    "Shopping",
-    "Travel",
-    "Transportation",
-    "Services",
-    "Entertainment",
-    "Health",
-    "Credit Card",
-    "Investments",
-    "Rent",
-    "Utilities",
-    "Telecom",
-    "Unknown"
-]
-
-
-def get_categories_prompt_str() -> str:
-    """Formats the list of allowed categories for LLM prompt injection."""
-    return ", ".join(ALLOWED_CATEGORIES)
 
 
 def normalize_and_validate_category(category: str | None) -> str | None:
@@ -91,12 +68,9 @@ def find_existing_category_in_db(merchant: str) -> str | None:
     if not merchant:
         return None
 
-    results = vector_db.similarity_search(merchant, k=5)
-    for doc in results:
-        meta = doc.metadata or {}
-        if meta.get("merchant", "").lower() == merchant.lower():
-            cat = meta.get("category")
-            return normalize_and_validate_category(cat)
+    found_merchant = get_merchant_name(merchant)
+    if found_merchant:
+        return normalize_and_validate_category(found_merchant.get("category"))
     return None
 
 

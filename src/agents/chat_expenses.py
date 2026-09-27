@@ -5,7 +5,6 @@ import sys
 import time
 import re
 from datetime import datetime
-from typing import Any, Tuple
 from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
 from dateutil import parser
@@ -21,6 +20,8 @@ from src.agents.add_expenses import get_categories_prompt_str
 from src.models.models import TransactionRecord
 from src.util.db import vector_db
 from src.util.ingest_transactions import sync_csv_to_vector_db
+from src.util.utilities import get_merchant_name, get_date_list, parse_date, extract_amount_from_query, \
+    extract_category_and_payment
 
 load_dotenv()
 
@@ -177,6 +178,8 @@ def global_filter_search(
     if category_filter:
         filtered_records = [r for r in filtered_records if category_filter.lower() in r["category"].lower()]
     if merchant_filter:
+        result = get_merchant_name(merchant_filter)
+        merchant_filter = result.get("merchant") if result else merchant_filter
         filtered_records = [r for r in filtered_records if merchant_filter.lower() in r["merchant"].lower()]
     if payment_mode_filter:
         clean_filter = payment_mode_filter.lower().replace("credit", "").replace("debit", "").strip()
@@ -240,118 +243,14 @@ def global_filter_search(
         f"{transactions_msg}" if len(filtered_records) > 0 else ""
     )
 
-
-def parse_date(date_str: str) -> tuple[bool, str] | tuple[bool, None]:
-    """
-    Parses a date string in various formats and returns it in DD-Mon-YYYY format.
-    Returns None if parsing fails.
-    """
-    try:
-        parsed_date = parser.parse(date_str)
-        formatted_date = parsed_date.strftime("%d-%b-%Y")
-        return True, formatted_date
-    except (ValueError, TypeError, OverflowError):
-        return False, None
-
-def extract_amount_from_query(query: str) -> tuple[bool, Any | None] | tuple[bool, None]:
-    """
-    Extracts an explicit monetary amount from a query string.
-    Handles: '140.56', '21-Aug-2026 140.56', '₹504', 'Rs. 1,250.00', '500 INR'.
-    Ignores date numbers like '2026', '21', '08'.
-    """
-    if not query:
-        return False, None
-
-    # 1. Mask out date formats (e.g. 21-Aug-2026, 2026-08-21, 21/08/2026) to prevent date digits matching as amounts
-    cleaned_query = re.sub(r"\b\d{1,4}[-/][A-Za-z0-9]{2,3}[-/]\d{2,4}\b", "", query)
-    cleaned_query = re.sub(r"\b(19\d\d|20\d\d)\b", "", cleaned_query)  # Mask standalone 4-digit years
-
-    # 2. Match currency symbols/prefixes or standalone decimal/integer numbers
-    # Group 1 captures the actual numeric value (e.g. 140.56 or 504 or 1,250.00)
-    matches = re.finditer(r"(?<![A-Za-z0-9])(?:₹\s*|rs\.?\s*|inr\s*)?(\d+(?:,\d+)*(?:\.\d{1,2})?)(?![A-Za-z0-9])", cleaned_query, re.IGNORECASE)
-
-    amounts = []
-    for match in matches:
-        raw_val = match.group(1).replace(",", "").strip()
-        try:
-            val = float(raw_val)
-            if val > 0:
-                amounts.append(val)
-        except ValueError:
-            continue
-
-    return (True, amounts[0]) if amounts else (False, None)
-
-CATEGORY_SYNONYMS = {
-    "Transport": ["transport", "transportation", "fuel", "petrol", "diesel", "cab", "uber", "ola", "auto", "metro", "parking", "toll"],
-    "Food & Drinks": ["food", "drinks", "dining", "restaurant", "cafe", "coffee", "lunch", "dinner", "breakfast", "swiggy", "zomato"],
-    "Groceries": ["grocery", "groceries", "supermarket", "blinkit", "zepto", "Swiggy Insta", "instamart", "vegetables", "fruits", "milk"],
-    "Shopping": ["shopping", "clothes", "apparel", "amazon", "flipkart", "electronics", "shoes"],
-    "Bills & Utilities": ["bills", "utilities", "electricity", "water", "wifi", "broadband", "mobile", "recharge", "rent", "maintenance"],
-    "Entertainment": ["entertainment", "movies", "cinema", "bookmyshow", "games", "playstation", "steam", "netflix", "spotify", "prime"],
-}
-
-def resolve_category(query: str) -> str | None:
-    query_lower = query.lower()
-    for official_cat, keywords in CATEGORY_SYNONYMS.items():
-        for kw in keywords:
-            if re.search(rf"\b{re.escape(kw)}\b", query_lower):
-                return official_cat
-    return None
-
-KNOWN_PAYMENT_MODES = ["UPI", "Card", "Cash"]
-
-
-def extract_category_and_payment(query: str) -> Tuple[str | None, str | None]:
-    pay_match = None
-
-    cat_match = resolve_category(query)
-
-    for pay in KNOWN_PAYMENT_MODES:
-        if re.search(rf"\b{re.escape(pay)}\b", query, re.IGNORECASE):
-            pay_match = "Card" if "card" in pay.lower() else pay.upper()
-            break
-
-    return cat_match, pay_match
-
-def get_date_list(start_date: str, end_date: str) -> list[str]:
-    """
-    Generates a list of dates in DD-Mon-YYYY format between start_date and end_date (inclusive).
-    """
-    try:
-        start_dt = parser.parse(start_date)
-        end_dt = parser.parse(end_date)
-    except (ValueError, TypeError):
-        return []
-
-    if start_dt > end_dt:
-        return []
-
-    date_list = []
-    current_dt = start_dt
-    while current_dt <= end_dt:
-        date_list.append(current_dt.strftime("%d-%b-%Y"))
-        current_dt += relativedelta(days=1)
-
-    return date_list
-
-def build_date_range_filter(date_range_list, merchant=None, category=None):
-    filters = [{"$or": [{"date": d} for d in date_range_list]}]
-    # Date range as $or
-    # Merchant filter
-    if merchant:
-        filters.append({"merchant": merchant})
-    # Category filter
-    if category:
-        filters.append({"category": category})
-    # Combine with $and if more than one filter
-    if len(filters) == 1:
-        return filters[0]
-    return {"$and": filters}
-
-
 @tool
-def search_transaction_date_range(start_date: str, end_date: str, merchant: str = None) -> str:
+def search_transaction_date_range(
+        start_date: str,
+        end_date: str,
+        category: str,
+        payment: str,
+        merchant: str = None
+) -> str:
     """
     Searches for transactions within a specific date range.
     Returns calculated totals, category breakdowns, and a compact transaction list.
@@ -363,6 +262,11 @@ def search_transaction_date_range(start_date: str, end_date: str, merchant: str 
     filter_date = {
         "$or": [{"date": d} for d in date_range_list]
     }
+
+    if category:
+        filter_date["category"] = category # type: ignore
+    if payment:
+        filter_date["payment"] = payment # type: ignore
 
     try:
         results = vector_db.similarity_search(
@@ -769,7 +673,7 @@ def query_agent_with_token_limit(user_query: str, thread_id: str = "iphone_chat_
 
     # 3. Invoke agent with safe fallback
     try:
-        response = dynamic_agent.invoke({"messages": [("user", user_query)]}, config=config)
+        response = dynamic_agent.invoke({"messages": [("user", user_query)]}, config=config) # type: ignore
         messages = response.get("messages", [])
         return messages[-1].content if messages else "No response generated."
     except Exception as e:
