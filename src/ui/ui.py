@@ -4,6 +4,8 @@ import pandas as pd
 import requests
 import streamlit as st
 from datetime import datetime
+
+from dateutil import parser
 from dotenv import load_dotenv
 
 from src.agents.add_expenses import ALLOWED_CATEGORIES
@@ -255,6 +257,11 @@ with tab_manage:
         return records
 
     all_records = fetch_all_transactions()
+    all_records = sorted(
+        all_records,
+        key=lambda x: parser.parse(str(x.get("date", "01-Jan-1970"))),
+        reverse=True
+    )
     if all_records:
         df_all = pd.DataFrame(all_records)
         if "amount" in df_all.columns:
